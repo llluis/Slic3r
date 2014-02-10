@@ -5,4 +5,4 @@ Differences implemented:
 - Unretract speed
 - Wait after unretract
 - Changed acceleration gcode from Marlin M204 to Repetier-Firmware M201
-- Firmware flow control through M221 for perimeters and infill
+- Flow ratio control for perimeters and infill
