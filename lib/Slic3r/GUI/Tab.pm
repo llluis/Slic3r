@@ -546,8 +546,8 @@ sub build {
             options => [qw(extrusion_width first_layer_extrusion_width perimeter_extrusion_width infill_extrusion_width solid_infill_extrusion_width top_infill_extrusion_width support_material_extrusion_width)],
         },
         {
-            title => 'Flow',
-            options => [qw(bridge_flow_ratio)],
+            title => 'Flow Ratio',
+            options => [qw(perimeter_flow_ratio infill_flow_ratio solid_infill_flow_ratio top_solid_infill_flow_ratio bridge_flow_ratio)],
         },
         {
             title => 'Other',
@@ -725,8 +725,8 @@ sub build {
     $self->_build_extruder_pages;
 }
 
-sub _extruder_options { qw(nozzle_diameter extruder_offset retract_length retract_lift retract_speed retract_restart_extra retract_before_travel wipe
-    retract_layer_change retract_length_toolchange retract_restart_extra_toolchange) }
+sub _extruder_options { qw(nozzle_diameter extruder_offset retract_length retract_lift retract_speed unretract_speed pressure_multiplier retract_restart_extra retract_before_travel wipe
+    retract_layer_change retract_length_toolchange retract_restart_extra_toolchange wait_after_unretract) }
 
 sub config {
     my $self = shift;
@@ -767,6 +767,13 @@ sub _build_extruder_pages {
                 options => [
                     map "${_}#${extruder_idx}",
                         qw(retract_length_toolchange retract_restart_extra_toolchange)
+                ],
+            },
+            {
+                title => 'Advanced pressure settings',
+                options => [
+                    map "${_}#${extruder_idx}",
+                        qw(pressure_multiplier unretract_speed wait_after_unretract)
                 ],
             },
         ]);

@@ -6,8 +6,8 @@ use Slic3r::Geometry qw(PI scale);
 use constant OPTIONS => [qw(
     extruder_offset
     nozzle_diameter filament_diameter extrusion_multiplier temperature first_layer_temperature
-    retract_length retract_lift retract_speed retract_restart_extra retract_before_travel
-    retract_layer_change retract_length_toolchange retract_restart_extra_toolchange wipe
+    retract_length retract_lift retract_speed unretract_speed retract_restart_extra pressure_multiplier retract_before_travel
+    retract_layer_change retract_length_toolchange retract_restart_extra_toolchange wipe wait_after_unretract
 )];
 
 has 'id'    => (is => 'rw', required => 1);

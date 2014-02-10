@@ -39,6 +39,11 @@ has 'last_f'             => (is => 'rw', default => sub {""});
 has 'last_fan_speed'     => (is => 'rw', default => sub {0});
 has 'wipe_path'          => (is => 'rw');
 
+my $adv_last_speed = 0;
+my $adv_last_amnt = 0;
+my $adv_last_e = 0;
+my $flow_last = 1;
+
 sub _build_speeds {
     my $self = shift;
     return {
@@ -331,7 +336,57 @@ sub extrude_path {
             ? sprintf("%.3f", $F * $1/100)
             : $self->config->first_layer_speed * 60;
     }
-    
+
+	# adjust flow
+	my $flow = 1;
+	my $flow_role = 'default';
+	if ($Slic3r::Config->perimeter_flow_ratio != 1 && $path->is_perimeter) {
+		$flow = $Slic3r::Config->perimeter_flow_ratio;
+		$flow_role = 'perimeter';
+	} elsif ($Slic3r::Config->solid_infill_flow_ratio != 1 && $path->is_solid_fill) {
+		$flow = $Slic3r::Config->solid_infill_flow_ratio;
+		$flow_role = 'solid infill';
+	} elsif ($Slic3r::Config->top_solid_infill_flow_ratio != 1 && $path->is_top_solid_fill) {
+		$flow = $Slic3r::Config->top_solid_infill_flow_ratio;
+		$flow_role = 'top solid infill';
+	} elsif ($Slic3r::Config->infill_flow_ratio != 1 && $path->is_sparse_fill) {
+		$flow = $Slic3r::Config->infill_flow_ratio;
+		$flow_role = 'sparse infill';
+	}
+	$gcode .= sprintf "%s\n", 
+				"; changing flow ratio (" . $flow . ") for " . $flow_role 
+				if (($flow != $flow_last) && ($self->config->gcode_comments));
+
+	# Advance to compensate pressure change
+	if ($self->extruder->pressure_multiplier > 0) {
+		my $v1 = $adv_last_speed/60;
+		my $v2 = $F/60;
+		#my $q = (1/2) * 1040 * ($v2/1000)^2;
+
+		#if ($v1 != $v2) {
+		if (($v1 != $v2) || ($adv_last_e != $e) || ($flow != $flow_last)) {
+			# Speed change
+			my $adv_amnt = $e * $v2 * $self->extruder->pressure_multiplier * $flow;
+			#my $adv_amnt = $q * $e * 20 * $self->extruder->pressure_multiplier;
+
+			#print STDOUT $self->layer->id . ";$v1;$v2;$e;$area;" . ($adv_amnt - $adv_last_amnt) . ";" . $flow . "\n"
+            #if $self->config->gcode_comments;
+
+			$gcode .= sprintf "G1 %s%.5f F%.3f",
+				$self->config->extrusion_axis,
+				$self->extruder->extrude($adv_amnt - $adv_last_amnt),
+				$self->extruder->retract_speed_mm_min;
+            $gcode .= " ; pressure management advance"
+                if $self->config->gcode_comments;
+            $gcode .= "\n";
+
+			$adv_last_amnt = $adv_amnt;
+		}
+	}
+	$adv_last_speed = $F;
+	$adv_last_e = $e;
+	$flow_last = $flow;
+
     # extrude arc or line
     $gcode .= ";_BRIDGE_FAN_START\n" if $path->is_bridge;
     my $path_length = 0;
@@ -342,7 +397,7 @@ sub extrude_path {
             
             # calculate extrusion length for this line
             my $E = 0;
-            $E = $self->extruder->extrude($e * $line_length) if $e;
+            $E = $self->extruder->extrude($e * $line_length * $flow) if $e;
             
             # compose G-code line
             my $point = $line->b;
@@ -464,7 +519,7 @@ sub _plan {
 
 sub retract {
     my ($self, %params) = @_;
-    
+
     # get the retraction length and abort if none
     my ($length, $restart_extra, $comment) = $params{toolchange}
         ? ($self->extruder->retract_length_toolchange,  $self->extruder->retract_restart_extra_toolchange,  "retract for tool change")
@@ -566,6 +621,13 @@ sub unretract {
         }
         $self->extruder->retracted(0);
         $self->extruder->restart_extra(0);
+
+		# Waits (dwell) n milliseconds after unretracts
+		if ($self->extruder->wait_after_unretract > 0) {
+            $gcode .= sprintf "G4 P%i", $self->extruder->wait_after_unretract;
+			$gcode .= " ; wait after unretract" if $self->config->gcode_comments;
+            $gcode .= "\n";
+		}
     }
     
     return $gcode;
@@ -584,7 +646,7 @@ sub set_acceleration {
     my ($self, $acceleration) = @_;
     return "" if !$acceleration;
     
-    return sprintf "M204 S%s%s\n",
+    return sprintf "M201 S%s%s\n",
         $acceleration, ($self->config->gcode_comments ? ' ; adjust acceleration' : '');
 }
 

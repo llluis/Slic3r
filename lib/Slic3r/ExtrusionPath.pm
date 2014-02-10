@@ -80,6 +80,21 @@ sub is_fill {
         || $self->role == EXTR_ROLE_TOPSOLIDFILL;
 }
 
+sub is_sparse_fill {
+    my $self = shift;
+    return $self->role == EXTR_ROLE_FILL;
+}
+
+sub is_solid_fill {
+    my $self = shift;
+    return $self->role == EXTR_ROLE_SOLIDFILL;
+}
+
+sub is_top_solid_fill {
+    my $self = shift;
+    return $self->role == EXTR_ROLE_TOPSOLIDFILL;
+}
+
 sub is_bridge {
     my $self = shift;
     return $self->role == EXTR_ROLE_BRIDGE

@@ -726,6 +726,9 @@ sub write_gcode {
         if $self->support_material_flow;
     printf $fh "; first layer extrusion width = %.2fmm\n", $self->regions->[0]->first_layer_flows->{perimeter}->width
         if $self->regions->[0]->first_layer_flows->{perimeter};
+    for (qw(perimeter_flow_ratio infill_flow_ratio solid_infill_flow_ratio top_solid_infill_flow_ratio bridge_flow_ratio)) {
+        printf $fh "; %s = %s\n", $_, $Slic3r::Config->$_;
+    }
     print  $fh "\n";
     
     # set up our extruder object
