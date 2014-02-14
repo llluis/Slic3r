@@ -361,30 +361,42 @@ sub extrude_path {
 	if ($self->extruder->pressure_multiplier > 0) {
 		my $v1 = $adv_last_speed/60;
 		my $v2 = $F/60;
-		#my $q = (1/2) * 1040 * ($v2/1000)^2;
 
-		#if ($v1 != $v2) {
-		if (($v1 != $v2) || ($adv_last_e != $e) || ($flow != $flow_last)) {
-			# Speed change
-			my $adv_amnt = $e * $v2 * $self->extruder->pressure_multiplier * $flow;
-			#my $adv_amnt = $q * $e * 20 * $self->extruder->pressure_multiplier;
+		# Verify change
+		if (($v1 != $v2)) { # || ($adv_last_e != $e) || ($flow != $flow_last)) {
+			
+			# Original
+			#my $adv_amnt = $e * $v2 * $self->extruder->pressure_multiplier * $flow;
 
-			#print STDOUT $self->layer->id . ";$v1;$v2;$e;$area;" . ($adv_amnt - $adv_last_amnt) . ";" . $flow . "\n"
-            #if $self->config->gcode_comments;
+			# Advance algorithm
+			my $adv_amnt = $e * $v2**2 * ($self->extruder->pressure_multiplier/100) * $flow;
 
-			$gcode .= sprintf "G1 %s%.5f F%.3f",
-				$self->config->extrusion_axis,
-				$self->extruder->extrude($adv_amnt - $adv_last_amnt),
-				$self->extruder->retract_speed_mm_min;
-            $gcode .= " ; pressure management advance"
-                if $self->config->gcode_comments;
-            $gcode .= "\n";
+			print STDOUT $self->layer->id . ";$v1;$v2;$e;$area;" . ($adv_amnt - $adv_last_amnt) . ";" . $flow . "\n"
+            if $self->config->gcode_comments;
+
+			if ($gcode !~ s/(G1 E(.*?) F(.*)\n)$/
+							my $len = $2 + $self->extruder->extrude($adv_amnt - $adv_last_amnt);
+							sprintf("G1 E%.5f F$3", $len);
+					      /ge) {
+
+  			    # There were no retraction before
+				$gcode .= sprintf "G1 %s%.5f F%.3f",
+					$self->config->extrusion_axis,
+					$self->extruder->extrude($adv_amnt - $adv_last_amnt),
+					$self->extruder->retract_speed_mm_min;
+				$gcode .= " ; pressure advance"
+					if $self->config->gcode_comments;
+			} else {
+				$gcode .= " + pressure advance"
+					if $self->config->gcode_comments;
+			}
+			$gcode .= "\n";
 
 			$adv_last_amnt = $adv_amnt;
 		}
+		$adv_last_speed = $F;
+		$adv_last_e = $e;
 	}
-	$adv_last_speed = $F;
-	$adv_last_e = $e;
 	$flow_last = $flow;
 
     # extrude arc or line
@@ -444,6 +456,7 @@ sub travel_to {
     my ($self, $point, $role, $comment) = @_;
     
     my $gcode = "";
+	my $speed = $self->speed;
     my $travel = Slic3r::Line->new($self->last_pos, $point);
     
     # move travel back to original layer coordinates for the island check.
@@ -485,6 +498,7 @@ sub travel_to {
         }
     }
     
+	$self->speed($speed);
     return $gcode;
 }
 
@@ -519,16 +533,33 @@ sub _plan {
 
 sub retract {
     my ($self, %params) = @_;
+    my $gcode = "";
+	my $speed = 0; 
+
+	$speed = $self->speeds->{$self->speed}/60
+	         if defined $self->speed && $self->speed ne 'travel';
+
+	if ($self->layer->id == 0) {
+        $speed = $self->config->first_layer_speed =~ /^(\d+(?:\.\d+)?)%$/
+            ? sprintf("%.3f", $speed * $1/100)
+            : $self->config->first_layer_speed;
+	}
 
     # get the retraction length and abort if none
     my ($length, $restart_extra, $comment) = $params{toolchange}
         ? ($self->extruder->retract_length_toolchange,  $self->extruder->retract_restart_extra_toolchange,  "retract for tool change")
         : ($self->extruder->retract_length,             $self->extruder->retract_restart_extra,             "retract");
-    
+
+	# adjust retract length based on previous speed
+	if ($self->extruder->retract_length_speed > 0) {
+		$length *= $speed/$self->extruder->retract_length_speed;
+		$length = $self->extruder->retract_min_length if $length < $self->extruder->retract_min_length;
+		$comment .= " (speed adjusted)";
+	}
+
     # if we already retracted, reduce the required amount of retraction
     $length -= $self->extruder->retracted;
     return "" unless $length > 0;
-    my $gcode = "";
     
     # wipe
     my $wipe_path;
