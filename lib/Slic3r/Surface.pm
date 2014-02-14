@@ -16,13 +16,12 @@ sub holes           { $_[0]->expolygon->holes }
 # static method to group surfaces having same surface_type, bridge_angle and thickness*
 sub group {
     my $class = shift;
-    my $params = ref $_[0] eq 'HASH' ? shift(@_) : {};
     my (@surfaces) = @_;
     
     my %unique_types = ();
     foreach my $surface (@surfaces) {
         my $type = join '_',
-            ($params->{merge_solid} && $surface->is_solid) ? 'solid' : $surface->surface_type,
+            $surface->surface_type,
             $surface->bridge_angle // '',
             $surface->thickness // '',
             $surface->thickness_layers;
@@ -55,6 +54,13 @@ sub is_solid {
     return $type == S_TYPE_TOP
         || $type == S_TYPE_BOTTOM
         || $type == S_TYPE_INTERNALSOLID;
+}
+
+sub is_external {
+    my $self = shift;
+    my $type = $self->surface_type;
+    return $type == S_TYPE_TOP
+        || $type == S_TYPE_BOTTOM;
 }
 
 sub is_bridge {
