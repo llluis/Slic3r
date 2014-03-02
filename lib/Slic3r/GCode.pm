@@ -375,8 +375,7 @@ sub extrude_path {
             if $self->config->gcode_comments;
 
 			if ($gcode !~ s/(G1 E(.*?) F(.*)\n)$/
-							my $len = $2 + $self->extruder->extrude($adv_amnt - $adv_last_amnt);
-							sprintf("G1 E%.5f F$3", $len);
+							sprintf("G1 E%.5f F$3", $self->extruder->extrude($adv_amnt - $adv_list_amnt));
 					      /ge) {
 
   			    # There were no retraction before
