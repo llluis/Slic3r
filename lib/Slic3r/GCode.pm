@@ -375,14 +375,16 @@ sub extrude_path {
             if $self->config->gcode_comments;
 
 			if ($gcode !~ s/(G1 E(.*?) F(.*)\n)$/
-							my $len = $2 + $self->extruder->extrude($adv_amnt - $adv_last_amnt);
-							sprintf("G1 E%.5f F$3", $len);
+							sprintf("G1 E%.5f F$3", $self->extruder->extrude($adv_amnt - $adv_last_amnt));
 					      /ge) {
 
   			    # There were no retraction before
 				$gcode .= sprintf "G1 %s%.5f F%.3f",
 					$self->config->extrusion_axis,
 					$self->extruder->extrude($adv_amnt - $adv_last_amnt),
+					($self->extruder->unretract_speed > 0 &&  ($adv_amnt - $adv_last_amnt) > 0 ) ?
+						$self->extruder->unretract_speed*60 :
+						$self->extruder->retract_speed_mm_min;
 					$self->extruder->retract_speed_mm_min;
 				$gcode .= " ; pressure advance"
 					if $self->config->gcode_comments;
