@@ -914,7 +914,7 @@ sub write_gcode {
     printf $fh "%s\n", $gcodegen->replace_variables($Slic3r::Config->end_gcode);
     
     foreach my $extruder (@{$self->extruders}) {
-        printf $fh "; filament used = %.1fmm (%.1fcm3)\n",
+        printf $fh "; filament used = %.3fmm (%.1fcm3)\n",
             $extruder->absolute_E, $extruder->extruded_volume/1000;
     }
     
