@@ -461,7 +461,7 @@ sub clip_fill_surfaces {
 
 sub bridge_over_infill {
     my $self = shift;
-    return if $self->config->fill_density == 1;
+    return if $self->config->fill_density >= $self->config->bridge_over_infill_threshold;
     
     for my $layer_id (1..$#{$self->layers}) {
         my $layer       = $self->layers->[$layer_id];

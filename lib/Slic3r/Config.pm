@@ -447,6 +447,18 @@ our $Options = {
         min     => 0,
         default => 0,
     },
+    'bridge_over_infill_threshold' => {
+        label   => 'Bridge over infill threshold',
+        tooltip => 'Disables the bridge over infill feature if the infill density is higher than this threshold.',
+        sidetext => '(fill density)',
+        scope   => 'object',
+        category => 'Infill',
+        cli     => 'bridge-over-infill-threshold=f',
+        type    => 'f',
+        min     => 0,
+		max     => 1,
+        default => 1,
+    },
     'infill_only_where_needed' => {
         label   => 'Only infill where needed',
         tooltip => 'This option will limit infill to the areas actually needed for supporting ceilings (it will act as internal support material).',

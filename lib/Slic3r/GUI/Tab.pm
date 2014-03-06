@@ -446,7 +446,7 @@ sub build {
         },
         {
             title => 'Advanced',
-            options => [qw(solid_infill_every_layers fill_angle
+            options => [qw(solid_infill_every_layers bridge_over_infill_threshold fill_angle
                 solid_infill_below_area only_retract_when_crossing_perimeters infill_first)],
         },
     ]);

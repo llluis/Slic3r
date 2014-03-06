@@ -20,5 +20,7 @@ Changes discussed in issue <a href='https://github.com/alexrj/Slic3r/issues/1677
 * Wait after unretract
    * Outputs a G4 dwell after unretract
 * Changed acceleration gcode from Marlin M204 to Repetier-Firmware M201
+* Bridge over infill threshold
+   * Allows the user to disable the bridge over infill feature based on the infill being used. If the infill density is higher than the threshold, the feature will be disabled and no bridge settings will be used.
 * Flow ratio control for perimeters and infill (experimental)
    * Let you specify different flow ratios for perimeters, solid infill and top solid infill
