@@ -759,7 +759,14 @@ sub _build_extruder_pages {
                 title => 'Retraction',
                 options => [
                     map "${_}#${extruder_idx}",
-                        qw(retract_length retract_length_speed retract_min_length retract_lift retract_speed retract_restart_extra retract_before_travel retract_layer_change wipe)
+                        qw(retract_length retract_lift retract_speed retract_restart_extra retract_before_travel retract_layer_change wipe)
+                ],
+            },
+            {
+                title => 'Advanced Retraction and Pressure Control',
+                options => [
+                    map "${_}#${extruder_idx}",
+                        qw(pressure_multiplier retract_length_speed retract_min_length unretract_speed wait_after_unretract)
                 ],
             },
             {
@@ -767,13 +774,6 @@ sub _build_extruder_pages {
                 options => [
                     map "${_}#${extruder_idx}",
                         qw(retract_length_toolchange retract_restart_extra_toolchange)
-                ],
-            },
-            {
-                title => 'Advanced pressure settings',
-                options => [
-                    map "${_}#${extruder_idx}",
-                        qw(pressure_multiplier unretract_speed wait_after_unretract)
                 ],
             },
         ]);
@@ -791,7 +791,7 @@ sub on_value_change {
     my $self = shift;
     my ($opt_key) = @_;
     $self->SUPER::on_value_change(@_);
-    
+
     if ($opt_key eq 'extruders_count') {
         # remove unused pages from list
         my @unused_pages = @{ $self->{extruder_pages} }[$self->{extruders_count} .. $#{$self->{extruder_pages}}];
