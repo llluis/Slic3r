@@ -338,13 +338,13 @@ sub extrude_path {
     }
 
 	# Dynamic unretract speed
-	if (($self->extruder->unretract_speed == 1) &&
-		($gcode =~ s/(G1 E(\d+\.*\d*) F(\d+\.*\d*)(.*)\n)$/
-					sprintf("G1 E%.5f F%.3f$4", $2, $F);
-					/ge)) {
-		$gcode .= " (dynamic speed)"
-			if $self->config->gcode_comments;
-		$gcode .= "\n";
+	if ($self->extruder->unretract_speed == 1) {
+		$gcode =~ s/G1 E(\d+\.?\d*) F(\d+\.?\d*)( ?)(.*)\n/
+				   my $str = sprintf("G1 E$1 F%.3f$3$4", $F);
+				   $str .= " (dynamic speed)" if $self->config->gcode_comments;
+				   $str .= "\n";
+				   sprintf("%s", $str);
+					/ge;
 	}
 
 	# adjust flow
@@ -363,6 +363,9 @@ sub extrude_path {
 		$flow = $Slic3r::Config->infill_flow_ratio;
 		$flow_role = 'sparse infill';
 	}
+	$gcode .= sprintf "%s\n", 
+				"; changing flow ratio (" . $flow . ") for " . $flow_role 
+				if (($flow != $flow_last) && ($self->config->gcode_comments));
 
 	# Advance algorithm to compensate pressure during speed change
 	if ($self->extruder->pressure_multiplier > 0) {
@@ -376,17 +379,20 @@ sub extrude_path {
 			#my $adv_amnt = $e * $v2 * $self->extruder->pressure_multiplier * $flow;
 
 			# Advance algorithm
-			my $adv_amnt = $e * $v2**2 * ($self->extruder->pressure_multiplier/100) * $flow;
+			my $adv_amnt = $e * $v2**2 * ($self->extruder->pressure_multiplier/100);
 
 			### DEBUG ###
 			# print STDOUT $self->layer->id . ";$v1;$v2;$e;$area;" . ($adv_amnt - $adv_last_amnt) . ";" . $flow . "\n"
             # if $self->config->gcode_comments;
 
 			# Edit unretract to account for advance
-			if ($gcode !~ s/(G1 E(\d+\.*\d*) F(.*)\n)$/
-							sprintf("G1 E%.5f F$3", 
-							  ($self->config->use_relative_e_distances ? $2 : 0) + 
-							   $self->extruder->extrude($adv_amnt - $adv_last_amnt));
+			if ($gcode !~ s/G1 E(\d+\.?\d*) F(\d+\.?\d*)( ?)(.*)\n/
+							my $str = sprintf("G1 E%.5f F$2$3$4", 
+										($self->config->use_relative_e_distances ? $1 : 0) + 
+										 $self->extruder->extrude($adv_amnt - $adv_last_amnt));
+							$str .= " + pressure advance" if $self->config->gcode_comments;
+							$str .= "\n";
+							sprintf("%s", $str);
 					      /ge) {
 
   			    # There were no unretraction before
@@ -398,21 +404,13 @@ sub extrude_path {
 						$self->extruder->retract_speed_mm_min;
 				$gcode .= " ; pressure advance"
 					if $self->config->gcode_comments;
-			} else {
-				$gcode .= " + pressure advance"
-					if $self->config->gcode_comments;
+				$gcode .= "\n";
 			}
-			$gcode .= "\n";
-
 			$adv_last_amnt = $adv_amnt;
 		}
 		$adv_last_speed = $F;
 		$adv_last_e = $e;
 	}
-	$gcode .= sprintf "%s\n", 
-				"; changing flow ratio (" . $flow . ") for " . $flow_role 
-				if (($flow != $flow_last) && ($self->config->gcode_comments));
-
 	$flow_last = $flow;
 
     # extrude arc or line

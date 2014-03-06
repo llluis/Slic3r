@@ -907,7 +907,7 @@ END
         default => [1],
     },
     'retract_length_speed' => {
-        label   => 'Speed Reference',
+        label   => 'Speed reference',
         tooltip => 'Speed reference for the proportional retraction. This indicates the speed which will trigger the exact length defined above. Intermediate speeds will yield porportional lengths. As different speeds may require different retraction length, this could help avoid unecessary lengthy retractions yet preventing ooze.',
         sidetext => 'mm/s (zero to disable)',
         cli     => 'retract-length-speed=f@',
@@ -918,8 +918,8 @@ END
         default => [0],
     },
     'retract_min_length' => {
-        label   => 'Minimum Length',
-        tooltip => 'When retraction is triggered, filament is always pulled back at least by this specified amount, independent of the proportional retraction. Only works when using proportional retraction (Speed reference)',
+        label   => 'Minimum retraction length',
+        tooltip => 'When retraction is triggered, filament is always pulled back at least by this specified amount, independent of the proportional retraction. Only works when using proportional retraction (Speed Reference not 0)',
         sidetext => 'mm (zero to disable)',
         cli     => 'retract-min-length=f@',
         type    => 'f',
@@ -940,7 +940,7 @@ END
     },
     'unretract_speed' => {
         opt_key => 'unretract_speed',
-        label   => 'Unretract Speed',
+        label   => 'Unretract speed',
         tooltip => 'The speed for unretractions (retract compensation). Set to 1 to have dynamic speed using extrusion speed of the subsequent segment. For instance, if after a retraction a segment will be extruded at 20mm/s, the unretract will be at 20mm/s also.',
         sidetext => 'mm/s (zero to disable or 1 for dynamic speed)',
         cli     => 'unretract-speed=f@',
@@ -951,8 +951,8 @@ END
         default => [0],
    },
     'wait_after_unretract' => {
-        label   => 'Wait after un-retract',
-        tooltip => 'Waits n milliseconds after retract to allow pressure stabilization in bowden systems.',
+        label   => 'Wait after unretract',
+        tooltip => 'Waits n milliseconds after unretract to allow pressure stabilization in the nozzle.',
         sidetext => 'milliseconds (zero to disable)',
         cli     => 'wait-after-unretract=f@',
         type    => 'i',
@@ -962,7 +962,7 @@ END
         default => [0],
     },
     'pressure_multiplier' => {
-        label   => 'Advance Constant',
+        label   => 'Pressure advance constant',
         tooltip => 'Pressure management multiplier. If greater than zero, it will inject or retract additional filament to control the pressure in the bowden tube. 1 means 100%. It adjusts only the amount of input raw filament that will be pushed or pulled, proportional.',
         sidetext => '(zero to disable)',
         cli     => 'pressure-multiplier=f@',
