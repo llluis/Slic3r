@@ -1,9 +1,7 @@
 #ifndef slic3r_Config_hpp_
 #define slic3r_Config_hpp_
 
-#include <myinit.h>
 #include <map>
-#include <sstream>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <myinit.h>
 #include "Point.hpp"
 
 namespace Slic3r {
@@ -22,7 +21,7 @@ class ConfigOption {
     public:
     virtual ~ConfigOption() {};
     virtual std::string serialize() const = 0;
-    virtual void deserialize(std::string str) = 0;
+    virtual bool deserialize(std::string str) = 0;
 };
 
 template <class T>
@@ -55,8 +54,9 @@ class ConfigOptionFloat : public ConfigOption
         return ss.str();
     };
     
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         this->value = ::atof(str.c_str());
+        return true;
     };
 };
 
@@ -73,13 +73,14 @@ class ConfigOptionFloats : public ConfigOption, public ConfigOptionVector<double
         return ss.str();
     };
     
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         this->values.clear();
         std::istringstream is(str);
         std::string item_str;
         while (std::getline(is, item_str, ',')) {
             this->values.push_back(::atof(item_str.c_str()));
         }
+        return true;
     };
 };
 
@@ -97,8 +98,9 @@ class ConfigOptionInt : public ConfigOption
         return ss.str();
     };
     
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         this->value = ::atoi(str.c_str());
+        return true;
     };
 };
 
@@ -115,13 +117,14 @@ class ConfigOptionInts : public ConfigOption, public ConfigOptionVector<int>
         return ss.str();
     };
     
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         this->values.clear();
         std::istringstream is(str);
         std::string item_str;
         while (std::getline(is, item_str, ',')) {
             this->values.push_back(::atoi(item_str.c_str()));
         }
+        return true;
     };
 };
 
@@ -146,7 +149,7 @@ class ConfigOptionString : public ConfigOption
         return str; 
     };
     
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         // s/\\n/\n/g
         size_t pos = 0;
         while ((pos = str.find("\\n", pos)) != std::string::npos) {
@@ -155,6 +158,7 @@ class ConfigOptionString : public ConfigOption
         }
         
         this->value = str;
+        return true;
     };
 };
 
@@ -172,13 +176,39 @@ class ConfigOptionStrings : public ConfigOption, public ConfigOptionVector<std::
         return ss.str();
     };
     
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         this->values.clear();
         std::istringstream is(str);
         std::string item_str;
         while (std::getline(is, item_str, ';')) {
             this->values.push_back(item_str);
         }
+        return true;
+    };
+};
+
+class ConfigOptionPercent : public ConfigOption
+{
+    public:
+    double value;
+    ConfigOptionPercent() : value(0) {};
+    
+    double get_abs_value(double ratio_over) const {
+        return ratio_over * this->value / 100;
+    };
+    
+    std::string serialize() const {
+        std::ostringstream ss;
+        ss << this->value;
+        std::string s(ss.str());
+        s += "%";
+        return s;
+    };
+    
+    bool deserialize(std::string str) {
+        // don't try to parse the trailing % since it's optional
+        int res = sscanf(str.c_str(), "%lf", &this->value);
+        return res == 1;
     };
 };
 
@@ -205,14 +235,16 @@ class ConfigOptionFloatOrPercent : public ConfigOption
         return s;
     };
     
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         if (str.find_first_of("%") != std::string::npos) {
-            sscanf(str.c_str(), "%lf%%", &this->value);
+            int res = sscanf(str.c_str(), "%lf%%", &this->value);
+            if (res == 0) return false;
             this->percent = true;
         } else {
             this->value = ::atof(str.c_str());
             this->percent = false;
         }
+        return true;
     };
 };
 
@@ -232,8 +264,15 @@ class ConfigOptionPoint : public ConfigOption
         return ss.str();
     };
     
-    void deserialize(std::string str) {
-        sscanf(str.c_str(), "%lf%*1[,x]%lf", &this->point.x, &this->point.y);
+    bool deserialize(std::string str) {
+        if (strncmp(str.c_str(), "0x", 2) == 0) {
+            this->point.x = 0;
+            int res = sscanf(str.c_str()+2, "%lf", &this->point.y);
+            return res == 1;
+        } else {
+            int res = sscanf(str.c_str(), "%lf%*1[,x]%lf", &this->point.x, &this->point.y);
+            return res == 2;
+        }
     };
 };
 
@@ -252,15 +291,26 @@ class ConfigOptionPoints : public ConfigOption, public ConfigOptionVector<Pointf
         return ss.str();
     };
     
-    void deserialize(std::string str) {
-        this->values.clear();
+    bool deserialize(std::string str) {
+        std::vector<Pointf> values;
         std::istringstream is(str);
         std::string point_str;
         while (std::getline(is, point_str, ',')) {
             Pointf point;
-            sscanf(point_str.c_str(), "%lfx%lf", &point.x, &point.y);
-            this->values.push_back(point);
+            if (strncmp(point_str.c_str(), "0x", 2) == 0) {
+                // if string starts with "0x", only apply sscanf() to the second coordinate
+                // otherwise it would parse the string as a hex number
+                point.x = 0;
+                int res = sscanf(point_str.c_str()+2, "%lf", &point.y);
+                if (res != 1) return false;
+            } else {
+                int res = sscanf(point_str.c_str(), "%lfx%lf", &point.x, &point.y);
+                if (res != 2) return false;
+            }
+            values.push_back(point);
         }
+        this->values = values;
+        return true;
     };
 };
 
@@ -276,8 +326,9 @@ class ConfigOptionBool : public ConfigOption
         return std::string(this->value ? "1" : "0");
     };
     
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         this->value = (str.compare("1") == 0);
+        return true;
     };
 };
 
@@ -294,13 +345,14 @@ class ConfigOptionBools : public ConfigOption, public ConfigOptionVector<bool>
         return ss.str();
     };
     
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         this->values.clear();
         std::istringstream is(str);
         std::string item_str;
         while (std::getline(is, item_str, ',')) {
             this->values.push_back(item_str.compare("1") == 0);
         }
+        return true;
     };
 };
 
@@ -322,10 +374,11 @@ class ConfigOptionEnum : public ConfigOption
         return "";
     };
 
-    void deserialize(std::string str) {
+    bool deserialize(std::string str) {
         t_config_enum_values enum_keys_map = ConfigOptionEnum<T>::get_enum_values();
-        assert(enum_keys_map.count(str) > 0);
+        if (enum_keys_map.count(str) == 0) return false;
         this->value = static_cast<T>(enum_keys_map[str]);
+        return true;
     };
 
     static t_config_enum_values get_enum_values();
@@ -348,9 +401,10 @@ class ConfigOptionEnumGeneric : public ConfigOption
         return "";
     };
 
-    void deserialize(std::string str) {
-        assert(this->keys_map->count(str) != 0);
+    bool deserialize(std::string str) {
+        if (this->keys_map->count(str) == 0) return false;
         this->value = (*this->keys_map)[str];
+        return true;
     };
 };
 
@@ -361,6 +415,7 @@ enum ConfigOptionType {
     coInts,
     coString,
     coStrings,
+    coPercent,
     coFloatOrPercent,
     coPoint,
     coPoints,
@@ -379,7 +434,6 @@ class ConfigOptionDef
     std::string tooltip;
     std::string sidetext;
     std::string cli;
-    std::string scope;
     t_config_option_key ratio_over;
     bool multiline;
     bool full_width;
@@ -408,10 +462,11 @@ class ConfigBase
     ConfigBase() : def(NULL) {};
     bool has(const t_config_option_key opt_key);
     virtual ConfigOption* option(const t_config_option_key opt_key, bool create = false) = 0;
-    virtual void keys(t_config_option_keys *keys) = 0;
-    void apply(ConfigBase &other, bool ignore_nonexistent = false);
+    virtual const ConfigOption* option(const t_config_option_key opt_key) const = 0;
+    virtual void keys(t_config_option_keys *keys) const = 0;
+    void apply(const ConfigBase &other, bool ignore_nonexistent = false);
     std::string serialize(const t_config_option_key opt_key);
-    void set_deserialize(const t_config_option_key opt_key, std::string str);
+    bool set_deserialize(const t_config_option_key opt_key, std::string str);
     double get_abs_value(const t_config_option_key opt_key);
     double get_abs_value(const t_config_option_key opt_key, double ratio_over);
     
@@ -419,7 +474,7 @@ class ConfigBase
     SV* as_hash();
     SV* get(t_config_option_key opt_key);
     SV* get_at(t_config_option_key opt_key, size_t i);
-    void set(t_config_option_key opt_key, SV* value);
+    bool set(t_config_option_key opt_key, SV* value);
     #endif
 };
 
@@ -427,13 +482,14 @@ class DynamicConfig : public ConfigBase
 {
     public:
     DynamicConfig() {};
+    DynamicConfig(const DynamicConfig& other);
     ~DynamicConfig();
     ConfigOption* option(const t_config_option_key opt_key, bool create = false);
-    void keys(t_config_option_keys *keys);
+    const ConfigOption* option(const t_config_option_key opt_key) const;
+    void keys(t_config_option_keys *keys) const;
     void erase(const t_config_option_key opt_key);
     
     private:
-    DynamicConfig(const DynamicConfig& other);              // we disable this by making it private and unimplemented
     DynamicConfig& operator= (const DynamicConfig& other);  // we disable this by making it private and unimplemented
     typedef std::map<t_config_option_key,ConfigOption*> t_options_map;
     t_options_map options;
@@ -442,7 +498,18 @@ class DynamicConfig : public ConfigBase
 class StaticConfig : public ConfigBase
 {
     public:
-    void keys(t_config_option_keys *keys);
+    void keys(t_config_option_keys *keys) const;
+    void apply(const ConfigBase &other, bool ignore_nonexistent = false) {
+        // this proxy appears to be needed otherwise the inherited signature couldn't be found from .xsp
+        ConfigBase::apply(other, ignore_nonexistent);
+    };
+    void apply(const DynamicConfig &other, bool ignore_nonexistent = false);
+    virtual ConfigOption* option(const t_config_option_key opt_key, bool create = false) = 0;
+    const ConfigOption* option(const t_config_option_key opt_key) const;
+    
+    #ifdef SLIC3RXS
+    bool set(t_config_option_key opt_key, SV* value);
+    #endif
 };
 
 }

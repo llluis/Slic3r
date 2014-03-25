@@ -9,7 +9,7 @@ use Slic3r::Geometry::Clipper qw(union_ex);
 use Slic3r::Surface ':types';
 
 has 'print_config'       => (is => 'ro', default => sub { Slic3r::Config::Print->new });
-has 'extra_variables'    => (is => 'rw', default => sub {{}});
+has 'placeholder_parser' => (is => 'rw', default => sub { Slic3r::GCode::PlaceholderParser->new });
 has 'standby_points'     => (is => 'rw');
 has 'enable_loop_clipping' => (is => 'rw', default => sub {1});
 has 'enable_wipe'        => (is => 'rw', default => sub {0});   # at least one extruder has wipe enabled
@@ -76,7 +76,7 @@ my %role_speeds = (
     &EXTR_ROLE_SOLIDFILL                    => 'solid_infill',
     &EXTR_ROLE_TOPSOLIDFILL                 => 'top_solid_infill',
     &EXTR_ROLE_BRIDGE                       => 'bridge',
-    &EXTR_ROLE_INTERNALBRIDGE               => 'solid_infill',
+    &EXTR_ROLE_INTERNALBRIDGE               => 'bridge',
     &EXTR_ROLE_SKIRT                        => 'perimeter',
     &EXTR_ROLE_GAPFILL                      => 'gap_fill',
 );
@@ -114,7 +114,7 @@ sub change_layer {
     if ($layer->id > 0 && ($self->print_config->overhangs || $self->print_config->start_perimeters_at_non_overhang)) {
         $self->_layer_overhangs->append(
             # clone ExPolygons because they come from Surface objects but will be used outside here
-            map $_->expolygon, map @{$_->slices->filter_by_type(S_TYPE_BOTTOM)}, @{$layer->regions}
+            map $_->expolygon, map @{$_->slices->filter_by_type(S_TYPE_BOTTOMBRIDGE)}, @{$layer->regions}
         );
     }
     if ($self->print_config->avoid_crossing_perimeters) {
@@ -187,6 +187,10 @@ sub extrude {
 
 sub extrude_loop {
     my ($self, $loop, $description) = @_;
+    
+    # make a copy; don't modify the orientation of the original loop object otherwise
+    # next copies (if any) would not detect the correct orientation
+    $loop = $loop->clone;
     
     # extrude all loops ccw
     my $was_clockwise = $loop->make_counter_clockwise;
@@ -649,7 +653,7 @@ sub set_extruder {
     
     # append custom toolchange G-code
     if (defined $self->extruder && $self->print_config->toolchange_gcode) {
-        $gcode .= sprintf "%s\n", $self->replace_variables($self->print_config->toolchange_gcode, {
+        $gcode .= sprintf "%s\n", $self->placeholder_parser->process($self->print_config->toolchange_gcode, {
             previous_extruder   => $self->extruder->id,
             next_extruder       => $extruder_id,
         });
@@ -746,11 +750,6 @@ sub set_bed_temperature {
         if $self->print_config->gcode_flavor eq 'teacup' && $wait;
     
     return $gcode;
-}
-
-sub replace_variables {
-    my ($self, $string, $extra) = @_;
-    return $self->print_config->replace_options($string, { %{$self->extra_variables}, %{ $extra || {} } });
 }
 
 1;

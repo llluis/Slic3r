@@ -8,7 +8,7 @@ use Wx qw(:misc :sizer :treectrl :button wxTAB_TRAVERSAL wxSUNKEN_BORDER wxBITMA
 use Wx::Event qw(EVT_BUTTON EVT_TREE_ITEM_COLLAPSING EVT_TREE_SEL_CHANGED);
 use base 'Wx::Panel';
 
-use constant ICON_MATERIAL      => 0;
+use constant ICON_OBJECT        => 0;
 use constant ICON_SOLIDMESH     => 1;
 use constant ICON_MODIFIERMESH  => 2;
 
@@ -20,43 +20,60 @@ sub new {
     my $object = $self->{model_object} = $params{model_object};
     
     # create TreeCtrl
-    my $tree = $self->{tree} = Wx::TreeCtrl->new($self, -1, wxDefaultPosition, [200, 200], 
-        wxTR_NO_BUTTONS | wxSUNKEN_BORDER | wxTR_HAS_VARIABLE_ROW_HEIGHT | wxTR_HIDE_ROOT
-        | wxTR_MULTIPLE | wxTR_NO_BUTTONS);
+    my $tree = $self->{tree} = Wx::TreeCtrl->new($self, -1, wxDefaultPosition, [300, 100], 
+        wxTR_NO_BUTTONS | wxSUNKEN_BORDER | wxTR_HAS_VARIABLE_ROW_HEIGHT
+        | wxTR_SINGLE | wxTR_NO_BUTTONS);
     {
         $self->{tree_icons} = Wx::ImageList->new(16, 16, 1);
         $tree->AssignImageList($self->{tree_icons});
-        $self->{tree_icons}->Add(Wx::Bitmap->new("$Slic3r::var/tag_blue.png", wxBITMAP_TYPE_PNG));
-        $self->{tree_icons}->Add(Wx::Bitmap->new("$Slic3r::var/package.png", wxBITMAP_TYPE_PNG));
-        $self->{tree_icons}->Add(Wx::Bitmap->new("$Slic3r::var/package_green.png", wxBITMAP_TYPE_PNG));
+        $self->{tree_icons}->Add(Wx::Bitmap->new("$Slic3r::var/brick.png", wxBITMAP_TYPE_PNG));     # ICON_OBJECT
+        $self->{tree_icons}->Add(Wx::Bitmap->new("$Slic3r::var/package.png", wxBITMAP_TYPE_PNG));   # ICON_SOLIDMESH
+        $self->{tree_icons}->Add(Wx::Bitmap->new("$Slic3r::var/plugin.png", wxBITMAP_TYPE_PNG));    # ICON_MODIFIERMESH
         
-        $tree->AddRoot("");
-        $self->reload_tree;
+        my $rootId = $tree->AddRoot("Object", ICON_OBJECT);
+        $tree->SetPlData($rootId, { type => 'object' });
     }
     
+    # buttons
     $self->{btn_load_part} = Wx::Button->new($self, -1, "Load part…", wxDefaultPosition, wxDefaultSize, wxBU_LEFT);
     $self->{btn_load_modifier} = Wx::Button->new($self, -1, "Load modifier…", wxDefaultPosition, wxDefaultSize, wxBU_LEFT);
     $self->{btn_delete} = Wx::Button->new($self, -1, "Delete part", wxDefaultPosition, wxDefaultSize, wxBU_LEFT);
-    
-    # left pane with tree
-    my $left_sizer = Wx::BoxSizer->new(wxVERTICAL);
-    $left_sizer->Add($tree, 0, wxEXPAND | wxALL, 10);
-    $left_sizer->Add($self->{btn_load_part}, 0);
-    $left_sizer->Add($self->{btn_load_modifier}, 0);
-    $left_sizer->Add($self->{btn_delete}, 0);
     if ($Slic3r::GUI::have_button_icons) {
         $self->{btn_load_part}->SetBitmap(Wx::Bitmap->new("$Slic3r::var/brick_add.png", wxBITMAP_TYPE_PNG));
         $self->{btn_load_modifier}->SetBitmap(Wx::Bitmap->new("$Slic3r::var/brick_add.png", wxBITMAP_TYPE_PNG));
         $self->{btn_delete}->SetBitmap(Wx::Bitmap->new("$Slic3r::var/brick_delete.png", wxBITMAP_TYPE_PNG));
     }
     
+    # buttons sizer
+    my $buttons_sizer = Wx::BoxSizer->new(wxHORIZONTAL);
+    $buttons_sizer->Add($self->{btn_load_part}, 0);
+    $buttons_sizer->Add($self->{btn_load_modifier}, 0);
+    $buttons_sizer->Add($self->{btn_delete}, 0);
+    $self->{btn_load_part}->SetFont($Slic3r::GUI::small_font);
+    $self->{btn_load_modifier}->SetFont($Slic3r::GUI::small_font);
+    $self->{btn_delete}->SetFont($Slic3r::GUI::small_font);
+    
+    # part settings panel
+    $self->{settings_panel} = Slic3r::GUI::Plater::OverrideSettingsPanel->new($self, on_change => sub { $self->{part_settings_changed} = 1; });
+    my $settings_sizer = Wx::StaticBoxSizer->new($self->{staticbox} = Wx::StaticBox->new($self, -1, "Part Settings"), wxVERTICAL);
+    $settings_sizer->Add($self->{settings_panel}, 1, wxEXPAND | wxALL, 0);
+    
+    # left pane with tree
+    my $left_sizer = Wx::BoxSizer->new(wxVERTICAL);
+    $left_sizer->Add($tree, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+    $left_sizer->Add($buttons_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+    $left_sizer->Add($settings_sizer, 1, wxEXPAND | wxALL, 0);
+    
     # right pane with preview canvas
-    my $canvas = $self->{canvas} = Slic3r::GUI::PreviewCanvas->new($self, $self->{model_object});
-    $canvas->SetSize([500,500]);
+    my $canvas;
+    if ($Slic3r::GUI::have_OpenGL) {
+        $canvas = $self->{canvas} = Slic3r::GUI::PreviewCanvas->new($self, $self->{model_object});
+        $canvas->SetSize([500,500]);
+    }
     
     $self->{sizer} = Wx::BoxSizer->new(wxHORIZONTAL);
     $self->{sizer}->Add($left_sizer, 0, wxEXPAND | wxALL, 0);
-    $self->{sizer}->Add($canvas, 1, wxEXPAND | wxALL, 0);
+    $self->{sizer}->Add($canvas, 1, wxEXPAND | wxALL, 0) if $canvas;
     
     $self->SetSizer($self->{sizer});
     $self->{sizer}->SetSizeHints($self);
@@ -74,7 +91,7 @@ sub new {
     EVT_BUTTON($self, $self->{btn_load_modifier}, sub { $self->on_btn_load(1) });
     EVT_BUTTON($self, $self->{btn_delete}, \&on_btn_delete);
     
-    $self->selection_changed;
+    $self->reload_tree;
     
     return $self;
 }
@@ -88,27 +105,24 @@ sub reload_tree {
     
     $tree->DeleteChildren($rootId);
     
-    my %nodes = ();  # material_id => nodeId
     foreach my $volume_id (0..$#{$object->volumes}) {
         my $volume = $object->volumes->[$volume_id];
-        my $material_id = $volume->material_id;
-        $material_id //= '_';
         
-        if (!exists $nodes{$material_id}) {
-            my $material_name = $material_id eq '_'
-                ? 'default'
-                : $object->model->get_material_name($material_id);
-            $nodes{$material_id} = $tree->AppendItem($rootId, "Material: $material_name", ICON_MATERIAL);
-        }
-        my $name = $volume->modifier ? 'Modifier mesh' : 'Solid mesh';
+        my $material_id = $volume->material_id // '_';
+        my $material_name = $material_id eq '_'
+            ? sprintf("Part #%d", $volume_id+1)
+            : $object->model->get_material_name($material_id);
+        
         my $icon = $volume->modifier ? ICON_MODIFIERMESH : ICON_SOLIDMESH;
-        my $itemId = $tree->AppendItem($nodes{$material_id}, $name, $icon);
+        my $itemId = $tree->AppendItem($rootId, $material_name, $icon);
         $tree->SetPlData($itemId, {
             type        => 'volume',
             volume_id   => $volume_id,
         });
     }
     $tree->ExpandAll;
+    
+    $self->selection_changed;
 }
 
 sub get_selection {
@@ -125,18 +139,48 @@ sub selection_changed {
     my ($self) = @_;
     
     # deselect all meshes
-    $_->{selected} = 0 for @{$self->{canvas}->volumes};
-    
-    # disable buttons
-    $self->{btn_delete}->Disable;
-    
-    my $itemData = $self->get_selection;
-    if ($itemData && $itemData->{type} eq 'volume') {
-        $self->{canvas}->volumes->[ $itemData->{volume_id} ]{selected} = 1;
-        $self->{btn_delete}->Enable;
+    if ($self->{canvas}) {
+        $_->{selected} = 0 for @{$self->{canvas}->volumes};
     }
     
-    $self->{canvas}->Render;
+    # disable things as if nothing is selected
+    $self->{btn_delete}->Disable;
+    $self->{settings_panel}->disable;
+    $self->{settings_panel}->set_config(undef);
+    
+    if (my $itemData = $self->get_selection) {
+        if ($itemData->{type} eq 'volume') {
+            # select volume in 3D preview
+            if ($self->{canvas}) {
+                $self->{canvas}->volumes->[ $itemData->{volume_id} ]{selected} = 1;
+            }
+            $self->{btn_delete}->Enable;
+            
+            # attach volume material config to settings panel
+            my $volume = $self->{model_object}->volumes->[ $itemData->{volume_id} ];
+            my $material = $self->{model_object}->model->materials->{ $volume->material_id // '_' };
+            $material //= $volume->assign_unique_material;
+            $self->{staticbox}->SetLabel('Part Settings');
+            $self->{settings_panel}->enable;
+            $self->{settings_panel}->set_opt_keys(Slic3r::Config::PrintRegion->new->get_keys);
+            $self->{settings_panel}->set_config($material->config);
+        } elsif ($itemData->{type} eq 'object') {
+            # select all object volumes in 3D preview
+            if ($self->{canvas}) {
+                $_->{selected} = 1 for @{$self->{canvas}->volumes};
+            }
+            
+            # attach object config to settings panel
+            $self->{staticbox}->SetLabel('Object Settings');
+            $self->{settings_panel}->enable;
+            $self->{settings_panel}->set_opt_keys(
+                [ map @{$_->get_keys}, Slic3r::Config::PrintObject->new, Slic3r::Config::PrintRegion->new ]
+            );
+            $self->{settings_panel}->set_config($self->{model_object}->config);
+        }
+    }
+    
+    $self->{canvas}->Render if $self->{canvas};
 }
 
 sub on_btn_load {
@@ -155,18 +199,28 @@ sub on_btn_load {
                 my $new_volume = $self->{model_object}->add_volume($volume);
                 $new_volume->modifier($is_modifier);
                 if (!defined $new_volume->material_id) {
+                    # it looks like this block is never entered because all input volumes seem to have an assigned material
+                    # TODO: check we can assume that for any input format
                     my $material_name = basename($input_file);
                     $material_name =~ s/\.(stl|obj)$//i;
-                    $self->{model_object}->model->set_material($material_name);
+                    my $material = $self->{model_object}->model->set_material($material_name);
                     $new_volume->material_id($material_name);
                 }
+                
+                # set a default extruder value, since user can't add it manually
+                my $material = $self->{model_object}->model->materials->{$new_volume->material_id};
+                $material->config->set_ifndef('extruder', 1);
+                
+                $self->{parts_changed} = 1;
             }
         }
     }
     
     $self->reload_tree;
-    $self->{canvas}->load_object($self->{model_object});
-    $self->{canvas}->Render;
+    if ($self->{canvas}) {
+        $self->{canvas}->load_object($self->{model_object});
+        $self->{canvas}->Render;
+    }
 }
 
 sub on_btn_delete {
@@ -183,11 +237,40 @@ sub on_btn_delete {
         }
         
         $self->{model_object}->delete_volume($itemData->{volume_id});
+        $self->{parts_changed} = 1;
     }
     
     $self->reload_tree;
-    $self->{canvas}->load_object($self->{model_object});
-    $self->{canvas}->Render;
+    if ($self->{canvas}) {
+        $self->{canvas}->load_object($self->{model_object});
+        $self->{canvas}->Render;
+    }
+}
+
+sub CanClose {
+    my $self = shift;
+    
+    return 1;  # skip validation for now
+    
+    # validate options before allowing user to dismiss the dialog
+    # the validate method only works on full configs so we have
+    # to merge our settings with the default ones
+    my $config = Slic3r::Config->merge($self->GetParent->GetParent->GetParent->GetParent->GetParent->config, $self->model_object->config);
+    eval {
+        $config->validate;
+    };
+    return 0 if Slic3r::GUI::catch_error($self);    
+    return 1;
+}
+
+sub PartsChanged {
+    my ($self) = @_;
+    return $self->{parts_changed};
+}
+
+sub PartSettingsChanged {
+    my ($self) = @_;
+    return $self->{part_settings_changed};
 }
 
 1;

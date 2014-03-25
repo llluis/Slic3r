@@ -326,13 +326,14 @@ sub add_volume {
         );
         
         if (defined $volume->material_id) {
-            #  merge material attributes (should we rename materials in case of duplicates?)
+            #  merge material attributes and config (should we rename materials in case of duplicates?)
             if (my $material = $volume->object->model->materials->{$volume->material_id}) {
                 my %attributes = %{ $material->attributes };
                 if (exists $self->model->materials->{$volume->material_id}) {
-                    %attributes = (%attributes, %{ $self->model->materials->{$volume->material_id}->attributes });
+                    %attributes = (%attributes, %{ $self->model->materials->{$volume->material_id}->attributes })
                 }
-                $self->model->set_material($volume->material_id, {%attributes});
+                my $new_material = $self->model->set_material($volume->material_id, {%attributes});
+                $new_material->config->apply($material->config);
             }
         }
     } else {
@@ -530,6 +531,15 @@ has 'object'            => (is => 'ro', weak_ref => 1, required => 1);
 has 'material_id'       => (is => 'rw');
 has 'mesh'              => (is => 'rw', required => 1);
 has 'modifier'          => (is => 'rw', defualt => sub { 0 });
+
+sub assign_unique_material {
+    my ($self) = @_;
+    
+    my $model = $self->object->model;
+    my $material_id = 1 + scalar keys %{$model->materials};
+    $self->material_id($material_id);
+    return $model->set_material($material_id);
+}
 
 package Slic3r::Model::Instance;
 use Moo;

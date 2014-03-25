@@ -4,6 +4,7 @@
 #include <myinit.h>
 #include <vector>
 #include <math.h>
+#include <boost/polygon/polygon.hpp>
 #include <string>
 
 namespace Slic3r {
@@ -11,6 +12,7 @@ namespace Slic3r {
 class Line;
 class Point;
 class Pointf;
+typedef Point Vector;
 typedef std::vector<Point> Points;
 typedef std::vector<Point*> PointPtrs;
 typedef std::vector<Pointf> Pointfs;
@@ -21,6 +23,7 @@ class Point
     coord_t x;
     coord_t y;
     explicit Point(coord_t _x = 0, coord_t _y = 0): x(_x), y(_y) {};
+    bool operator==(const Point& rhs) const;
     std::string wkt() const;
     void scale(double factor);
     void translate(double x, double y);
@@ -63,7 +66,7 @@ class Pointf
     void translate(double x, double y);
     
     #ifdef SLIC3RXS
-    void from_SV(SV* point_sv);
+    bool from_SV(SV* point_sv);
     SV* to_SV_pureperl() const;
     #endif
 };
@@ -78,5 +81,21 @@ class Pointf3 : public Pointf
 };
 
 }
+
+// start Boost
+namespace boost { namespace polygon {
+    template <>
+    struct geometry_concept<Point> { typedef point_concept type; };
+   
+    template <>
+    struct point_traits<Point> {
+        typedef coord_t coordinate_type;
+    
+        static inline coordinate_type get(const Point& point, orientation_2d orient) {
+            return (orient == HORIZONTAL) ? point.x : point.y;
+        }
+    };
+} }
+// end Boost
 
 #endif

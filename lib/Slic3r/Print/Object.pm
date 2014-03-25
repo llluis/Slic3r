@@ -246,7 +246,10 @@ sub slice {
                     
                     # remove such parts from original region
                     $other_layerm->slices->clear;
-                    $other_layerm->append($_) for @{ diff($other_slices, $my_parts) };
+                    $other_layerm->slices->append(Slic3r::Surface->new(
+                        expolygon    => $_,
+                        surface_type => S_TYPE_INTERNAL,
+                    )) for @{ diff_ex($other_slices, [ map @$_, @$my_parts ]) };
                 }
             }
         }
@@ -331,7 +334,7 @@ sub _slice_region {
     my ($self, $region_id, $z, $modifier) = @_;
 
     return [] if !defined $self->region_volumes->[$region_id];
-
+    
     # compose mesh
     my $mesh;
     foreach my $volume_id (@{$self->region_volumes->[$region_id]}) {
@@ -345,7 +348,7 @@ sub _slice_region {
             $mesh = $volume->mesh->clone;
         }
     }
-    next if !defined $mesh;
+    return if !defined $mesh;
 
     # transform mesh
     # we ignore the per-instance transformations currently and only 
@@ -465,17 +468,21 @@ sub detect_surfaces_type {
             };
             
             # comparison happens against the *full* slices (considering all regions)
+            # unless internal shells are requested
             my $upper_layer = $self->layers->[$i+1];
             my $lower_layer = $i > 0 ? $self->layers->[$i-1] : undef;
             
-            my (@bottom, @top, @internal) = ();
-            
             # find top surfaces (difference between current surfaces
             # of current layer and upper one)
+            my @top = ();
             if ($upper_layer) {
+                my $upper_slices = $self->config->interface_shells
+                    ? [ map $_->expolygon, @{$upper_layer->regions->[$region_id]->slices} ]
+                    : $upper_layer->slices;
+                
                 @top = $difference->(
                     [ map $_->expolygon, @{$layerm->slices} ],
-                    $upper_layer->slices,
+                    $upper_slices,
                     S_TYPE_TOP,
                 );
             } else {
@@ -487,13 +494,30 @@ sub detect_surfaces_type {
             
             # find bottom surfaces (difference between current surfaces
             # of current layer and lower one)
+            my @bottom = ();
             if ($lower_layer) {
-                # lower layer's slices are already Surface objects
-                @bottom = $difference->(
+                # any surface lying on the void is a true bottom bridge
+                push @bottom, $difference->(
                     [ map $_->expolygon, @{$layerm->slices} ],
                     $lower_layer->slices,
-                    S_TYPE_BOTTOM,
+                    S_TYPE_BOTTOMBRIDGE,
                 );
+                
+                # if user requested internal shells, we need to identify surfaces
+                # lying on other slices not belonging to this region
+                if ($self->config->interface_shells) {
+                    # non-bridging bottom surfaces: any part of this layer lying 
+                    # on something else, excluding those lying on our own region
+                    my $supported = intersection_ex(
+                        [ map @{$_->expolygon}, @{$layerm->slices} ],
+                        [ map @$_, @{$lower_layer->slices} ],
+                    );
+                    push @bottom, $difference->(
+                        $supported,
+                        [ map $_->expolygon, @{$lower_layer->regions->[$region_id]->slices} ],
+                        S_TYPE_BOTTOM,
+                    );
+                }
             } else {
                 # if no lower layer, all surfaces of this one are solid
                 # we clone surfaces because we're going to clear the slices collection
@@ -512,7 +536,7 @@ sub detect_surfaces_type {
             }
             
             # find internal surfaces (difference between top/bottom surfaces and others)
-            @internal = $difference->(
+            my @internal = $difference->(
                 [ map $_->expolygon, @{$layerm->slices} ],
                 [ map $_->expolygon, @top, @bottom ],
                 S_TYPE_INTERNAL,
@@ -556,8 +580,8 @@ sub clip_fill_surfaces {
     my $overhangs = [];  # arrayref of polygons
     for my $layer_id (reverse 0..$#{$self->layers}) {
         my $layer = $self->layers->[$layer_id];
-        my @layer_internal = ();
-        my @new_internal = ();
+        my @layer_internal = ();  # arrayref of Surface objects
+        my @new_internal = ();    # arrayref of Surface objects
         
         # clip this layer's internal surfaces to @overhangs
         foreach my $layerm (@{$layer->regions}) {
@@ -591,10 +615,10 @@ sub clip_fill_surfaces {
         if ($layer_id > 0) {
             my $solid = diff(
                 [ map @$_, @{$layer->slices} ],
-                \@layer_internal,
+                [ map $_->p, @layer_internal ],
             );
             $overhangs = offset($solid, +$additional_margin);
-            push @$overhangs, @new_internal;  # propagate upper overhangs
+            push @$overhangs, map $_->p, @new_internal;  # propagate upper overhangs
         }
     }
 }
@@ -604,7 +628,7 @@ sub bridge_over_infill {
     
     for my $region_id (0..$#{$self->print->regions}) {
         my $fill_density = $self->print->regions->[$region_id]->config->fill_density;
-        next if $fill_density == 1 || $fill_density == 0;
+        next if $fill_density == 100 || $fill_density == 0;
         
         for my $layer_id (1..$#{$self->layers}) {
             my $layer       = $self->layers->[$layer_id];
@@ -700,7 +724,7 @@ sub discover_horizontal_shells {
                 $_->surface_type(S_TYPE_INTERNALSOLID) for @{$layerm->fill_surfaces->filter_by_type(S_TYPE_INTERNAL)};
             }
             
-            EXTERNAL: foreach my $type (S_TYPE_TOP, S_TYPE_BOTTOM) {
+            EXTERNAL: foreach my $type (S_TYPE_TOP, S_TYPE_BOTTOM, S_TYPE_BOTTOMBRIDGE) {
                 # find slices of current type for current layer
                 # use slices instead of fill_surfaces because they also include the perimeter area
                 # which needs to be propagated in shells; we need to grow slices like we did for
@@ -727,7 +751,8 @@ sub discover_horizontal_shells {
                     next if $n < 0 || $n > $#{$self->layers};
                     Slic3r::debugf "  looking for neighbors on layer %d...\n", $n;
                     
-                    my $neighbor_fill_surfaces = $self->layers->[$n]->regions->[$region_id]->fill_surfaces;
+                    my $neighbor_layerm = $self->layers->[$n]->regions->[$region_id];
+                    my $neighbor_fill_surfaces = $neighbor_layerm->fill_surfaces;
                     my @neighbor_fill_surfaces = map $_->clone, @$neighbor_fill_surfaces;  # clone because we will use these surfaces even after clearing the collection
                     
                     # find intersection between neighbor and current layer's surfaces
@@ -746,41 +771,49 @@ sub discover_horizontal_shells {
                     );
                     next EXTERNAL if !@$new_internal_solid;
                     
-                    # make sure the new internal solid is wide enough, as it might get collapsed when
-                    # spacing is added in Fill.pm
+                    if ($layerm->config->fill_density == 0) {
+                        # if we're printing a hollow object we discard any solid shell thinner
+                        # than a perimeter width, since it's probably just crossing a sloping wall
+                        # and it's not wanted in a hollow print even if it would make sense when
+                        # obeying the solid shell count option strictly (DWIM!)
+                        my $margin = $neighbor_layerm->flow(FLOW_ROLE_PERIMETER)->scaled_width;
+                        my $too_narrow = diff(
+                            $new_internal_solid,
+                            offset2($new_internal_solid, -$margin, +$margin, CLIPPER_OFFSET_SCALE, JT_MITER, 5),
+                            1,
+                        );
+                        $new_internal_solid = $solid = diff(
+                            $new_internal_solid,
+                            $too_narrow,
+                        ) if @$too_narrow;
+                    }
+                    
+                    # make sure the new internal solid is wide enough, as it might get collapsed
+                    # when spacing is added in Fill.pm
                     {
+                        my $margin = 3 * $layerm->flow(FLOW_ROLE_SOLID_INFILL)->scaled_width; # require at least this size
                         # we use a higher miterLimit here to handle areas with acute angles
                         # in those cases, the default miterLimit would cut the corner and we'd
                         # get a triangle in $too_narrow; if we grow it below then the shell
                         # would have a different shape from the external surface and we'd still
                         # have the same angle, so the next shell would be grown even more and so on.
-                        my $margin = 3 * $layerm->flow(FLOW_ROLE_SOLID_INFILL)->scaled_width; # require at least this size
                         my $too_narrow = diff(
                             $new_internal_solid,
                             offset2($new_internal_solid, -$margin, +$margin, CLIPPER_OFFSET_SCALE, JT_MITER, 5),
                             1,
                         );
                         
-                        # if some parts are going to collapse, use a different strategy according to fill density
                         if (@$too_narrow) {
-                            if ($layerm->config->fill_density > 0) {
-                                # if we have internal infill, grow the collapsing parts and add the extra area to 
-                                # the neighbor layer as well as to our original surfaces so that we support this 
-                                # additional area in the next shell too
-
-                                # make sure our grown surfaces don't exceed the fill area
-                                my @grown = @{intersection(
-                                    offset($too_narrow, +$margin),
-                                    [ map $_->p, @neighbor_fill_surfaces ],
-                                )};
-                                $new_internal_solid = $solid = [ @grown, @$new_internal_solid ];
-                            } else {
-                                # if we're printing a hollow object, we discard such small parts
-                                $new_internal_solid = $solid = diff(
-                                    $new_internal_solid,
-                                    $too_narrow,
-                                );
-                            }
+                            # grow the collapsing parts and add the extra area to  the neighbor layer 
+                            # as well as to our original surfaces so that we support this 
+                            # additional area in the next shell too
+                        
+                            # make sure our grown surfaces don't exceed the fill area
+                            my @grown = @{intersection(
+                                offset($too_narrow, +$margin),
+                                [ map $_->p, @neighbor_fill_surfaces ],
+                            )};
+                            $new_internal_solid = $solid = [ @grown, @$new_internal_solid ];
                         }
                     }
                     
@@ -810,7 +843,7 @@ sub discover_horizontal_shells {
                         (expolygon => $_, surface_type => S_TYPE_INTERNALSOLID), @$internal_solid);
                     
                     # assign top and bottom surfaces to layer
-                    foreach my $s (@{Slic3r::Surface::Collection->new(grep { ($_->surface_type == S_TYPE_TOP) || ($_->surface_type == S_TYPE_BOTTOM) } @neighbor_fill_surfaces)->group}) {
+                    foreach my $s (@{Slic3r::Surface::Collection->new(grep { ($_->surface_type == S_TYPE_TOP) || $_->is_bottom } @neighbor_fill_surfaces)->group}) {
                         my $solid_surfaces = diff_ex(
                             [ map $_->p, @$s ],
                             [ map @$_, @$internal_solid, @$internal ],

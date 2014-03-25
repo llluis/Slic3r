@@ -77,9 +77,16 @@ sub load {
     my ($file) = @_;
     
     my $ini = __PACKAGE__->read_ini($file);
+    return $class->load_ini_hash($ini->{_});
+}
+
+sub load_ini_hash {
+    my $class = shift;
+    my ($ini_hash) = @_;
+    
     my $config = $class->new;
-    foreach my $opt_key (keys %{$ini->{_}}) {
-        ($opt_key, my $value) = _handle_legacy($opt_key, $ini->{_}{$opt_key});
+    foreach my $opt_key (keys %$ini_hash) {
+        ($opt_key, my $value) = _handle_legacy($opt_key, $ini_hash->{$opt_key});
         next if !defined $opt_key;
         $config->set_deserialize($opt_key, $value);
     }
@@ -119,6 +126,11 @@ sub _handle_legacy {
     if ($opt_key eq 'gcode_flavor' && $value eq 'makerbot') {
         $value = 'makerware';
     }
+    if ($opt_key eq 'fill_density' && defined($value) && $value !~ /%/ && $value <= 1) {
+        # fill_density was turned into a percent value
+        $value *= 100;
+        $value = "$value";  # force update of the PV value, workaround for bug https://rt.cpan.org/Ticket/Display.html?id=94110
+    }
     
     # For historical reasons, the world's full of configs having these very low values;
     # to avoid unexpected behavior we need to ignore them.  Banning these two hard-coded
@@ -156,22 +168,28 @@ sub set_ifndef {
     }
 }
 
-sub save {
-    my $self = shift;
-    my ($file) = @_;
+sub as_ini {
+    my ($self) = @_;
     
     my $ini = { _ => {} };
     foreach my $opt_key (sort @{$self->get_keys}) {
         next if $Options->{$opt_key}{shortcut};
         $ini->{_}{$opt_key} = $self->serialize($opt_key);
     }
-    __PACKAGE__->write_ini($file, $ini);
+    return $ini;
+}
+
+sub save {
+    my $self = shift;
+    my ($file) = @_;
+    
+    __PACKAGE__->write_ini($file, $self->as_ini);
 }
 
 sub setenv {
     my $self = shift;
     
-    foreach my $opt_key (sort keys %$Options) {
+    foreach my $opt_key (@{$self->get_keys}) {
         $ENV{"SLIC3R_" . uc $opt_key} = $self->serialize($opt_key);
     }
 }
@@ -257,10 +275,8 @@ sub validate {
         if !first { $_ eq $self->solid_fill_pattern } @{$Options->{solid_fill_pattern}{values}};
     
     # --fill-density
-    die "Invalid value for --fill-density\n"
-        if $self->fill_density < 0 || $self->fill_density > 1;
     die "The selected fill pattern is not supposed to work at 100% density\n"
-        if $self->fill_density == 1
+        if $self->fill_density == 100
             && !first { $_ eq $self->fill_pattern } @{$Options->{solid_fill_pattern}{values}};
     
     # --infill-every-layers
@@ -325,7 +341,7 @@ sub validate {
         my $max_nozzle_diameter = max(@{ $self->nozzle_diameter });
         die "Invalid extrusion width (too large)\n"
             if defined first { $_ > 10 * $max_nozzle_diameter }
-                map $self->get_value("${_}_extrusion_width"),
+                map $self->get_abs_value_over("${_}_extrusion_width", $self->layer_height),
                 qw(perimeter infill solid_infill top_infill support_material first_layer);
     }
     
@@ -343,10 +359,11 @@ sub validate {
             @values = ($self->$opt_key);
         }
         foreach my $value (@values) {
-            if ($type eq 'i' || $type eq 'f') {
+            if ($type eq 'i' || $type eq 'f' || $opt->{type} eq 'percent') {
+                $value =~ s/%$// if $opt->{type} eq 'percent';
                 die "Invalid value for $opt_key\n"
                     if ($type eq 'i' && $value !~ /^-?\d+$/)
-                    || ($type eq 'f' && $value !~ /^-?(?:\d+|\d*\.\d+)$/)
+                    || (($type eq 'f' || $opt->{type} eq 'percent') && $value !~ /^-?(?:\d+|\d*\.\d+)$/)
                     || (defined $opt->{min} && $value < $opt->{min})
                     || (defined $opt->{max} && $value > $opt->{max});
             } elsif ($type eq 's' && $opt->{type} eq 'select') {
@@ -355,46 +372,8 @@ sub validate {
             }
         }
     }
-}
-
-sub replace_options {
-    my $self = shift;
-    my ($string, $more_variables) = @_;
     
-    $more_variables ||= {};
-    $more_variables->{$_} = $ENV{$_} for grep /^SLIC3R_/, keys %ENV;
-    {
-        my $variables_regex = join '|', keys %$more_variables;
-        $string =~ s/\[($variables_regex)\]/$more_variables->{$1}/eg;
-    }
-    
-    my @lt = localtime; $lt[5] += 1900; $lt[4] += 1;
-    $string =~ s/\[timestamp\]/sprintf '%04d%02d%02d-%02d%02d%02d', @lt[5,4,3,2,1,0]/egx;
-    $string =~ s/\[year\]/$lt[5]/eg;
-    $string =~ s/\[month\]/$lt[4]/eg;
-    $string =~ s/\[day\]/$lt[3]/eg;
-    $string =~ s/\[hour\]/$lt[2]/eg;
-    $string =~ s/\[minute\]/$lt[1]/eg;
-    $string =~ s/\[second\]/$lt[0]/eg;
-    $string =~ s/\[version\]/$Slic3r::VERSION/eg;
-    
-    # build a regexp to match the available options
-    my @options = grep !$Slic3r::Config::Options->{$_}{multiline}, @{$self->get_keys};
-    my $options_regex = join '|', @options;
-    
-    # use that regexp to search and replace option names with option values
-    # it looks like passing $1 as argument to serialize() directly causes a segfault
-    # (maybe some perl optimization? maybe regex captures are not regular SVs?)
-    $string =~ s/\[($options_regex)\]/my $opt_key = $1; $self->serialize($opt_key)/eg;
-    foreach my $opt_key (grep ref $self->$_ eq 'ARRAY', @options) {
-        my $value = $self->$opt_key;
-        $string =~ s/\[${opt_key}_${_}\]/$value->[$_]/eg for 0 .. $#$value;
-        if ($Options->{$opt_key}{type} eq 'point') {
-            $string =~ s/\[${opt_key}_X\]/$value->[0]/eg;
-            $string =~ s/\[${opt_key}_Y\]/$value->[1]/eg;
-        }
-    }
-    return $string;
+    return 1;
 }
 
 # min object distance is max(duplicate_distance, clearance_radius)
@@ -416,7 +395,8 @@ sub write_ini {
     binmode $fh, ':utf8';
     my $localtime = localtime;
     printf $fh "# generated by Slic3r $Slic3r::VERSION on %s\n", "$localtime";
-    foreach my $category (sort keys %$ini) {
+    # make sure the _ category is the first one written
+    foreach my $category (sort { ($a eq '_') ? -1 : ($a cmp $b) } keys %$ini) {
         printf $fh "\n[%s]\n", $category if $category ne '_';
         foreach my $key (sort keys %{$ini->{$category}}) {
             printf $fh "%s = %s\n", $key, $ini->{$category}{$key};
@@ -440,7 +420,7 @@ sub read_ini {
         next if /^\s+/;
         next if /^$/;
         next if /^\s*#/;
-        if (/^\[(\w+)\]$/) {
+        if (/^\[(.+?)\]$/) {
             $category = $1;
             next;
         }

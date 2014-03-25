@@ -8,7 +8,7 @@ ConfigBase::has(const t_config_option_key opt_key) {
 }
 
 void
-ConfigBase::apply(ConfigBase &other, bool ignore_nonexistent) {
+ConfigBase::apply(const ConfigBase &other, bool ignore_nonexistent) {
     // get list of option keys to apply
     t_config_option_keys opt_keys;
     other.keys(&opt_keys);
@@ -22,7 +22,8 @@ ConfigBase::apply(ConfigBase &other, bool ignore_nonexistent) {
         }
         
         // not the most efficient way, but easier than casting pointers to subclasses
-        my_opt->deserialize( other.option(*it)->serialize() );
+        bool res = my_opt->deserialize( other.option(*it)->serialize() );
+        if (!res) CONFESS("Unexpected failure when deserializing serialized value");
     }
 }
 
@@ -33,19 +34,20 @@ ConfigBase::serialize(const t_config_option_key opt_key) {
     return opt->serialize();
 }
 
-void
+bool
 ConfigBase::set_deserialize(const t_config_option_key opt_key, std::string str) {
     if (this->def->count(opt_key) == 0) throw "Calling set_deserialize() on unknown option";
     ConfigOptionDef* optdef = &(*this->def)[opt_key];
     if (!optdef->shortcut.empty()) {
-        for (std::vector<t_config_option_key>::iterator it = optdef->shortcut.begin(); it != optdef->shortcut.end(); ++it)
-            this->set_deserialize(*it, str);
-        return;
+        for (std::vector<t_config_option_key>::iterator it = optdef->shortcut.begin(); it != optdef->shortcut.end(); ++it) {
+            if (!this->set_deserialize(*it, str)) return false;
+        }
+        return true;
     }
     
     ConfigOption* opt = this->option(opt_key, true);
     assert(opt != NULL);
-    opt->deserialize(str);
+    return opt->deserialize(str);
 }
 
 double
@@ -95,6 +97,8 @@ ConfigBase::get(t_config_option_key opt_key) {
     if (opt == NULL) return &PL_sv_undef;
     if (ConfigOptionFloat* optv = dynamic_cast<ConfigOptionFloat*>(opt)) {
         return newSVnv(optv->value);
+    } else if (ConfigOptionPercent* optv = dynamic_cast<ConfigOptionPercent*>(opt)) {
+        return newSVnv(optv->value);
     } else if (ConfigOptionFloats* optv = dynamic_cast<ConfigOptionFloats*>(opt)) {
         AV* av = newAV();
         av_fill(av, optv->values.size()-1);
@@ -111,12 +115,12 @@ ConfigBase::get(t_config_option_key opt_key) {
         return newRV_noinc((SV*)av);
     } else if (ConfigOptionString* optv = dynamic_cast<ConfigOptionString*>(opt)) {
         // we don't serialize() because that would escape newlines
-        return newSVpvn(optv->value.c_str(), optv->value.length());
+        return newSVpvn_utf8(optv->value.c_str(), optv->value.length(), true);
     } else if (ConfigOptionStrings* optv = dynamic_cast<ConfigOptionStrings*>(opt)) {
         AV* av = newAV();
         av_fill(av, optv->values.size()-1);
         for (std::vector<std::string>::iterator it = optv->values.begin(); it != optv->values.end(); ++it)
-            av_store(av, it - optv->values.begin(), newSVpvn(it->c_str(), it->length()));
+            av_store(av, it - optv->values.begin(), newSVpvn_utf8(it->c_str(), it->length(), true));
         return newRV_noinc((SV*)av);
     } else if (ConfigOptionPoint* optv = dynamic_cast<ConfigOptionPoint*>(opt)) {
         return optv->point.to_SV_pureperl();
@@ -136,7 +140,7 @@ ConfigBase::get(t_config_option_key opt_key) {
         return newRV_noinc((SV*)av);
     } else {
         std::string serialized = opt->serialize();
-        return newSVpvn(serialized.c_str(), serialized.length());
+        return newSVpvn_utf8(serialized.c_str(), serialized.length(), true);
     }
 }
 
@@ -152,7 +156,7 @@ ConfigBase::get_at(t_config_option_key opt_key, size_t i) {
     } else if (ConfigOptionStrings* optv = dynamic_cast<ConfigOptionStrings*>(opt)) {
         // we don't serialize() because that would escape newlines
         std::string val = optv->get_at(i);
-        return newSVpvn(val.c_str(), val.length());
+        return newSVpvn_utf8(val.c_str(), val.length(), true);
     } else if (ConfigOptionPoints* optv = dynamic_cast<ConfigOptionPoints*>(opt)) {
         return optv->get_at(i).to_SV_pureperl();
     } else if (ConfigOptionBools* optv = dynamic_cast<ConfigOptionBools*>(opt)) {
@@ -162,38 +166,37 @@ ConfigBase::get_at(t_config_option_key opt_key, size_t i) {
     }
 }
 
-void
+bool
 ConfigBase::set(t_config_option_key opt_key, SV* value) {
     ConfigOption* opt = this->option(opt_key, true);
     if (opt == NULL) CONFESS("Trying to set non-existing option");
     
-    ConfigOptionDef* optdef = &(*this->def)[opt_key];
-    if (!optdef->shortcut.empty()) {
-        for (std::vector<t_config_option_key>::iterator it = optdef->shortcut.begin(); it != optdef->shortcut.end(); ++it)
-            this->set(*it, value);
-        return;
-    }
-    
     if (ConfigOptionFloat* optv = dynamic_cast<ConfigOptionFloat*>(opt)) {
+        if (!looks_like_number(value)) return false;
         optv->value = SvNV(value);
     } else if (ConfigOptionFloats* optv = dynamic_cast<ConfigOptionFloats*>(opt)) {
-        optv->values.clear();
+        std::vector<double> values;
         AV* av = (AV*)SvRV(value);
         const size_t len = av_len(av)+1;
         for (size_t i = 0; i < len; i++) {
             SV** elem = av_fetch(av, i, 0);
-            optv->values.push_back(SvNV(*elem));
+            if (!looks_like_number(*elem)) return false;
+            values.push_back(SvNV(*elem));
         }
+        optv->values = values;
     } else if (ConfigOptionInt* optv = dynamic_cast<ConfigOptionInt*>(opt)) {
+        if (!looks_like_number(value)) return false;
         optv->value = SvIV(value);
     } else if (ConfigOptionInts* optv = dynamic_cast<ConfigOptionInts*>(opt)) {
-        optv->values.clear();
+        std::vector<int> values;
         AV* av = (AV*)SvRV(value);
         const size_t len = av_len(av)+1;
         for (size_t i = 0; i < len; i++) {
             SV** elem = av_fetch(av, i, 0);
-            optv->values.push_back(SvIV(*elem));
+            if (!looks_like_number(*elem)) return false;
+            values.push_back(SvIV(*elem));
         }
+        optv->values = values;
     } else if (ConfigOptionString* optv = dynamic_cast<ConfigOptionString*>(opt)) {
         optv->value = std::string(SvPV_nolen(value), SvCUR(value));
     } else if (ConfigOptionStrings* optv = dynamic_cast<ConfigOptionStrings*>(opt)) {
@@ -205,17 +208,18 @@ ConfigBase::set(t_config_option_key opt_key, SV* value) {
             optv->values.push_back(std::string(SvPV_nolen(*elem), SvCUR(*elem)));
         }
     } else if (ConfigOptionPoint* optv = dynamic_cast<ConfigOptionPoint*>(opt)) {
-        optv->point.from_SV(value);
+        return optv->point.from_SV(value);
     } else if (ConfigOptionPoints* optv = dynamic_cast<ConfigOptionPoints*>(opt)) {
-        optv->values.clear();
+        std::vector<Pointf> values;
         AV* av = (AV*)SvRV(value);
         const size_t len = av_len(av)+1;
         for (size_t i = 0; i < len; i++) {
             SV** elem = av_fetch(av, i, 0);
             Pointf point;
-            point.from_SV(*elem);
-            optv->values.push_back(point);
+            if (!point.from_SV(*elem)) return false;
+            values.push_back(point);
         }
+        optv->values = values;
     } else if (ConfigOptionBool* optv = dynamic_cast<ConfigOptionBool*>(opt)) {
         optv->value = SvTRUE(value);
     } else if (ConfigOptionBools* optv = dynamic_cast<ConfigOptionBools*>(opt)) {
@@ -227,8 +231,9 @@ ConfigBase::set(t_config_option_key opt_key, SV* value) {
             optv->values.push_back(SvTRUE(*elem));
         }
     } else {
-        opt->deserialize( std::string(SvPV_nolen(value)) );
+        if (!opt->deserialize( std::string(SvPV_nolen(value)) )) return false;
     }
+    return true;
 }
 #endif
 
@@ -237,6 +242,11 @@ DynamicConfig::~DynamicConfig () {
         ConfigOption* opt = it->second;
         if (opt != NULL) delete opt;
     }
+}
+
+DynamicConfig::DynamicConfig (const DynamicConfig& other) {
+    this->def = other.def;
+    this->apply(other, false);
 }
 
 ConfigOption*
@@ -257,6 +267,8 @@ DynamicConfig::option(const t_config_option_key opt_key, bool create) {
                 opt = new ConfigOptionString ();
             } else if (optdef->type == coStrings) {
                 opt = new ConfigOptionStrings ();
+            } else if (optdef->type == coPercent) {
+                opt = new ConfigOptionPercent ();
             } else if (optdef->type == coFloatOrPercent) {
                 opt = new ConfigOptionFloatOrPercent ();
             } else if (optdef->type == coPoint) {
@@ -283,8 +295,13 @@ DynamicConfig::option(const t_config_option_key opt_key, bool create) {
     return this->options[opt_key];
 }
 
+const ConfigOption*
+DynamicConfig::option(const t_config_option_key opt_key) const {
+    return const_cast<DynamicConfig*>(this)->option(opt_key, false);
+}
+
 void
-DynamicConfig::keys(t_config_option_keys *keys) {
+DynamicConfig::keys(t_config_option_keys *keys) const {
     for (t_options_map::const_iterator it = this->options.begin(); it != this->options.end(); ++it)
         keys->push_back(it->first);
 }
@@ -295,11 +312,63 @@ DynamicConfig::erase(const t_config_option_key opt_key) {
 }
 
 void
-StaticConfig::keys(t_config_option_keys *keys) {
+StaticConfig::keys(t_config_option_keys *keys) const {
     for (t_optiondef_map::const_iterator it = this->def->begin(); it != this->def->end(); ++it) {
-        ConfigOption* opt = this->option(it->first);
+        const ConfigOption* opt = this->option(it->first);
         if (opt != NULL) keys->push_back(it->first);
     }
 }
+
+void
+StaticConfig::apply(const DynamicConfig &other, bool ignore_nonexistent) {
+    // clone the other config so that we can remove shortcut options after applying them
+    DynamicConfig other_clone = other;
+    
+    // get list of option keys to apply
+    t_config_option_keys opt_keys;
+    other_clone.keys(&opt_keys);
+    
+    // loop through options and apply them
+    for (t_config_option_keys::const_iterator opt_key = opt_keys.begin(); opt_key != opt_keys.end(); ++opt_key) {
+        // if this is not a shortcut, skip it
+        ConfigOptionDef* optdef = &(*this->def)[*opt_key];
+        if (optdef->shortcut.empty()) continue;
+        
+        // expand the option into other_clone if it does not exist already
+        for (std::vector<t_config_option_key>::iterator it = optdef->shortcut.begin(); it != optdef->shortcut.end(); ++it) {
+            if (other_clone.has(*it)) continue;
+            ConfigOption* my_opt = other_clone.option(*it, true);
+            
+            // not the most efficient way, but easier than casting pointers to subclasses
+            my_opt->deserialize( other_clone.option(*opt_key)->serialize() );
+        }
+        
+        // remove the shortcut option from other_clone
+        other_clone.erase(*opt_key);
+    }
+    
+    static_cast<ConfigBase*>(this)->apply(other_clone, ignore_nonexistent);
+}
+
+const ConfigOption*
+StaticConfig::option(const t_config_option_key opt_key) const
+{
+    return const_cast<StaticConfig*>(this)->option(opt_key, false);
+}
+
+#ifdef SLIC3RXS
+bool
+StaticConfig::set(t_config_option_key opt_key, SV* value) {
+    ConfigOptionDef* optdef = &(*this->def)[opt_key];
+    if (!optdef->shortcut.empty()) {
+        for (std::vector<t_config_option_key>::iterator it = optdef->shortcut.begin(); it != optdef->shortcut.end(); ++it) {
+            if (!this->set(*it, value)) return false;
+        }
+        return true;
+    }
+    
+    return static_cast<ConfigBase*>(this)->set(opt_key, value);
+}
+#endif
 
 }

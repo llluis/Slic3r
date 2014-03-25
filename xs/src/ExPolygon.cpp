@@ -1,8 +1,21 @@
 #include "ExPolygon.hpp"
+#include "Geometry.hpp"
 #include "Polygon.hpp"
+#include "Line.hpp"
 #include "ClipperUtils.hpp"
 
 namespace Slic3r {
+
+ExPolygon::operator Points() const
+{
+    Points points;
+    Polygons pp = *this;
+    for (Polygons::const_iterator poly = pp.begin(); poly != pp.end(); ++poly) {
+        for (Points::const_iterator point = poly->points.begin(); point != poly->points.end(); ++point)
+            points.push_back(*point);
+    }
+    return points;
+}
 
 ExPolygon::operator Polygons() const
 {
@@ -119,6 +132,30 @@ ExPolygon::simplify(double tolerance, ExPolygons &expolygons) const
     ExPolygons ep = this->simplify(tolerance);
     expolygons.reserve(expolygons.size() + ep.size());
     expolygons.insert(expolygons.end(), ep.begin(), ep.end());
+}
+
+void
+ExPolygon::medial_axis(double max_width, double min_width, Polylines* polylines) const
+{
+    // init helper object
+    Slic3r::Geometry::MedialAxis ma(max_width, min_width);
+    
+    // populate list of segments for the Voronoi diagram
+    this->contour.lines(&ma.lines);
+    for (Polygons::const_iterator hole = this->holes.begin(); hole != this->holes.end(); ++hole)
+        hole->lines(&ma.lines);
+    
+    // compute the Voronoi diagram
+    ma.build(polylines);
+    
+    // extend initial and final segments of each polyline (they will be clipped)
+    for (Polylines::iterator polyline = polylines->begin(); polyline != polylines->end(); ++polyline) {
+        polyline->extend_start(max_width);
+        polyline->extend_end(max_width);
+    }
+    
+    // clip segments to our expolygon area
+    intersection(*polylines, *this, *polylines);
 }
 
 #ifdef SLIC3RXS

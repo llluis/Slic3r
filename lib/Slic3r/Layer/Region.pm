@@ -6,7 +6,7 @@ use Slic3r::ExtrusionPath ':roles';
 use Slic3r::Flow ':roles';
 use Slic3r::Geometry qw(PI A B scale unscale chained_path points_coincide);
 use Slic3r::Geometry::Clipper qw(union_ex diff_ex intersection_ex 
-    offset offset2 offset2_ex union_pt diff intersection
+    offset offset_ex offset2 offset2_ex union_pt diff intersection
     union diff intersection_pl);
 use Slic3r::Surface ':types';
 
@@ -65,7 +65,8 @@ sub make_perimeters {
     my $mm3_per_mm          = $perimeter_flow->mm3_per_mm($self->height);
     my $pwidth              = $perimeter_flow->scaled_width;
     my $pspacing            = $perimeter_flow->scaled_spacing;
-    my $ispacing            = $self->flow(FLOW_ROLE_SOLID_INFILL)->scaled_spacing;
+    my $solid_infill_flow   = $self->flow(FLOW_ROLE_SOLID_INFILL);
+    my $ispacing            = $solid_infill_flow->scaled_spacing;
     my $gap_area_threshold  = $pwidth ** 2;
     
     $self->perimeters->clear;
@@ -93,14 +94,15 @@ sub make_perimeters {
                     # the minimum thickness of a single loop is:
                     # width/2 + spacing/2 + spacing/2 + width/2
                     @offsets = @{offset2(\@last, -(0.5*$pwidth + 0.5*$pspacing - 1), +(0.5*$pspacing - 1))};
-                
+                    
                     # look for thin walls
                     if ($self->config->thin_walls) {
                         my $diff = diff_ex(
                             \@last,
                             offset(\@offsets, +0.5*$pwidth),
+                            1,  # medial axis requires non-overlapping geometry
                         );
-                        push @thin_walls, grep abs($_->area) >= $gap_area_threshold, @$diff;
+                        push @thin_walls, @$diff;
                     }
                 } else {
                     @offsets = @{offset2(\@last, -(1.5*$pspacing - 1), +(0.5*$pspacing - 1))};
@@ -148,6 +150,30 @@ sub make_perimeters {
         );
     }
     
+    # process thin walls by collapsing slices to single passes
+    my @thin_wall_polylines = ();
+    if (@thin_walls) {
+        # the following offset2 ensures almost nothing in @thin_walls is narrower than $min_width
+        # (actually, something larger than that still may exist due to mitering or other causes)
+        my $min_width = $pwidth / 4;
+        @thin_walls = @{offset2_ex([ map @$_, @thin_walls ], -$min_width/2, +$min_width/2)};
+        
+        # the maximum thickness of our thin wall area is equal to the minimum thickness of a single loop
+        @thin_wall_polylines = map @{$_->medial_axis($pwidth + $pspacing, $min_width)}, @thin_walls;
+        Slic3r::debugf "  %d thin walls detected\n", scalar(@thin_wall_polylines) if $Slic3r::debug;
+        
+        if (0) {
+            require "Slic3r/SVG.pm";
+            Slic3r::SVG::output(
+                "medial_axis.svg",
+                no_arrows => 1,
+                expolygons      => \@thin_walls,
+                green_polylines => [ map $_->polygon->split_at_first_point, @{$self->perimeters} ],
+                red_polylines   => \@thin_wall_polylines,
+            );
+        }
+    }
+    
     # find nesting hierarchies separately for contours and holes
     my $contours_pt = union_pt(\@contours);
     my $holes_pt    = union_pt(\@holes);
@@ -159,36 +185,20 @@ sub make_perimeters {
     $traverse = sub {
         my ($polynodes, $depth, $is_contour) = @_;
         
-        # use a nearest neighbor search to order these children
-        # TODO: supply second argument to chained_path() too?
-        my @ordering_points = map { ($_->{outer} // $_->{hole})->first_point } @$polynodes;
-        my @nodes = @$polynodes[@{chained_path(\@ordering_points)}];
-        
-        my @loops = ();
-        
-        foreach my $polynode (@nodes) {
-            # if this is an external contour find all holes belonging to this contour(s)
-            # and prepend them
-            if ($is_contour && $depth == 0) {
-                # $polynode is the outermost loop of an island
-                my @holes = ();
-                for (my $i = 0; $i <= $#$holes_pt; $i++) {
-                    if ($polynode->{outer}->contains_point($holes_pt->[$i]{outer}->first_point)) {
-                        push @holes, splice @$holes_pt, $i, 1;  # remove from candidates to reduce complexity
-                        $i--;
-                    }
-                }
-                push @loops, reverse map $traverse->([$_], 0), @holes;
-            }
-            push @loops, $traverse->($polynode->{children}, $depth+1, $is_contour);
+        # convert all polynodes to ExtrusionLoop objects
+        my $collection = Slic3r::ExtrusionPath::Collection->new;
+        my @children = ();
+        foreach my $polynode (@$polynodes) {
+            my $polygon = ($polynode->{outer} // $polynode->{hole})->clone;
             
             # return ccw contours and cw holes
             # GCode.pm will convert all of them to ccw, but it needs to know
             # what the holes are in order to compute the correct inwards move
-            
-            my $polygon = ($polynode->{outer} // $polynode->{hole})->clone;
-            $polygon->reverse if defined $polynode->{hole};
-            $polygon->reverse if !$is_contour;
+            if ($is_contour) {
+                $polygon->make_counter_clockwise;
+            } else {
+                $polygon->make_clockwise;
+            }
             
             my $role = EXTR_ROLE_PERIMETER;
             if ($is_contour ? $depth == 0 : !@{ $polynode->{children} }) {
@@ -199,11 +209,62 @@ sub make_perimeters {
                 $role = EXTR_ROLE_CONTOUR_INTERNAL_PERIMETER;
             }
             
-            push @loops, Slic3r::ExtrusionLoop->new(
+            $collection->append(Slic3r::ExtrusionLoop->new(
                 polygon         => $polygon,
                 role            => $role,
                 mm3_per_mm      => $mm3_per_mm,
-            );
+            ));
+            
+            # save the children
+            push @children, $polynode->{children};
+        }
+
+        # if we're handling the top-level contours, add thin walls as candidates too
+        # in order to include them in the nearest-neighbor search
+        if ($is_contour && $depth == 0) {
+            foreach my $polyline (@thin_wall_polylines) {
+                $collection->append(Slic3r::ExtrusionPath->new(
+                    polyline        => $polyline,
+                    role            => EXTR_ROLE_EXTERNAL_PERIMETER,
+                    mm3_per_mm      => $mm3_per_mm,
+                ));
+            }
+        }
+        
+        # use a nearest neighbor search to order these children
+        # TODO: supply second argument to chained_path() too?
+        my $sorted_collection = $collection->chained_path_indices(0);
+        my @orig_indices = @{$sorted_collection->orig_indices};
+        
+        my @loops = ();
+        foreach my $loop (@$sorted_collection) {
+            my $orig_index = shift @orig_indices;
+            
+            if ($loop->isa('Slic3r::ExtrusionPath')) {
+                push @loops, $loop->clone;
+            } else {
+                # if this is an external contour find all holes belonging to this contour(s)
+                # and prepend them
+                if ($is_contour && $depth == 0) {
+                    # $loop is the outermost loop of an island
+                    my @holes = ();
+                    for (my $i = 0; $i <= $#$holes_pt; $i++) {
+                        if ($loop->polygon->contains_point($holes_pt->[$i]{outer}->first_point)) {
+                            push @holes, splice @$holes_pt, $i, 1;  # remove from candidates to reduce complexity
+                            $i--;
+                        }
+                    }
+                    
+                    # order holes efficiently
+                    @holes = @holes[@{chained_path([ map {($_->{outer} // $_->{hole})->first_point} @holes ])}];
+                    
+                    push @loops, reverse map $traverse->([$_], 0, 0), @holes;
+                }
+                
+                # traverse children and prepend them to this loop
+                push @loops, $traverse->($children[$orig_index], $depth+1, $is_contour);
+                push @loops, $loop->clone;
+            }
         }
         return @loops;
     };
@@ -221,116 +282,37 @@ sub make_perimeters {
     # append perimeters
     $self->perimeters->append(@loops);
     
-    # process thin walls by collapsing slices to single passes
-    if (@thin_walls) {
-        my @p = map $_->medial_axis($pspacing), @thin_walls;
-        my @paths = ();
-        for my $p (@p) {
-            next if $p->length <= $pspacing * 2;
-            my %params = (
-                role        => EXTR_ROLE_EXTERNAL_PERIMETER,
-                mm3_per_mm  => $mm3_per_mm,
+    # fill gaps
+    {
+        my $fill_gaps = sub {
+            my ($min, $max, $w) = @_;
+            
+            my $this = diff_ex(
+                offset2([ map @$_, @gaps ], -$min/2, +$min/2),
+                offset2([ map @$_, @gaps ], -$max/2, +$max/2),
+                1,
             );
-            push @paths, $p->isa('Slic3r::Polygon')
-                ? Slic3r::ExtrusionLoop->new(polygon  => $p, %params)
-                : Slic3r::ExtrusionPath->new(polyline => $p, %params);
-        }
-        
-        $self->perimeters->append(
-            map $_->clone, @{Slic3r::ExtrusionPath::Collection->new(@paths)->chained_path(0)}
-        );
-        Slic3r::debugf "  %d thin walls detected\n", scalar(@paths) if $Slic3r::debug;
-    }
-    
-    $self->_fill_gaps(\@gaps);
-}
-
-sub _fill_gaps {
-    my $self = shift;
-    my ($gaps) = @_;
-    
-    return unless @$gaps;
-    
-    my $filler = Slic3r::Fill->new->filler('rectilinear');
-    $filler->angle($self->config->fill_angle);
-    $filler->layer_id($self->layer->id);
-    
-    # we should probably use this code to handle thin walls
-    # but we need to enable dynamic extrusion width before as we can't
-    # use zigzag for thin walls.
-    
-    # medial axis-based gap fill should benefit from detection of larger gaps too, so 
-    # we could try with 1.5*$w for example, but that doesn't work well for zigzag fill
-    # because it tends to create very sparse points along the gap when the infill direction
-    # is not parallel to the gap (1.5*$w thus may only work well with a straight line)
-    my $w = $self->flow(FLOW_ROLE_PERIMETER)->width;
-    my @widths = ($w, 0.4 * $w);  # worth trying 0.2 too?
-    foreach my $width (@widths) {
-        my $flow = $self->flow(FLOW_ROLE_PERIMETER, 0, $width);
-        
-        # extract the gaps having this width
-        my @this_width = map @{$_->offset_ex(+0.5*$flow->scaled_width)},
-            map @{$_->noncollapsing_offset_ex(-0.5*$flow->scaled_width)},
-            @$gaps;
-        
-        if (0) {  # remember to re-enable t/dynamic.t
-            # fill gaps using dynamic extrusion width, by treating them like thin polygons,
-            # thus generating the skeleton and using it to fill them
+            
+            my $flow = $self->flow(FLOW_ROLE_SOLID_INFILL, 0, $w);
             my %path_args = (
-                role        => EXTR_ROLE_SOLIDFILL,
+                role        => EXTR_ROLE_GAPFILL,
                 mm3_per_mm  => $flow->mm3_per_mm($self->height),
             );
+            my @polylines = map @{$_->medial_axis($max, $min/2)}, @$this;
             $self->thin_fills->append(map {
                 $_->isa('Slic3r::Polygon')
-                    ? Slic3r::ExtrusionLoop->new(polygon => $_, %path_args)->split_at_first_point  # we should keep these as loops
+                    ? Slic3r::ExtrusionLoop->new(polygon => $_, %path_args)->split_at_first_point  # should we keep these as loops?
                     : Slic3r::ExtrusionPath->new(polyline => $_, %path_args),
-            } map $_->medial_axis($flow->scaled_width), @this_width);
+            } @polylines);
+
+            Slic3r::debugf "  %d gaps filled with extrusion width = %s\n", scalar @$this, $w
+                if @$this;
+        };
         
-            Slic3r::debugf "  %d gaps filled with extrusion width = %s\n", scalar @this_width, $width
-                if @{ $self->thin_fills };
-            
-        } else {
-            # fill gaps using zigzag infill
-            
-            # since this is infill, we have to offset by half-extrusion width inwards
-            my @infill = map @{$_->offset_ex(-0.5*$flow->scaled_width)}, @this_width;
-            
-            foreach my $expolygon (@infill) {
-                my ($params, @paths) = $filler->fill_surface(
-                    Slic3r::Surface->new(expolygon => $expolygon, surface_type => S_TYPE_INTERNALSOLID),
-                    density => 1,
-                    flow    => $flow,
-                );
-                my $mm3_per_mm = $params->{flow}->mm3_per_mm($self->height);
-                
-                # Split polylines into lines so that the chained_path() search
-                # at the final stage has more freedom and will choose starting
-                # points closer than last positions. OTOH, this will make such
-                # search slower. Probably, ExtrusionPath objects should support
-                # splitting nearby a given position so that we can choose the right
-                # entry point even in the middle of the path without needing a 
-                # complex, slow, chained_path() search on all segments. TODO.
-                # Such logic will also avoid all the small travel moves that this 
-                # line-splitting causes, and it will be applicable to other things
-                # too.
-                my @lines = map @{Slic3r::Polyline->new(@$_)->lines}, @paths;
-                
-                @paths = map Slic3r::ExtrusionPath->new(
-                    polyline        => Slic3r::Polyline->new(@$_),
-                    role            => EXTR_ROLE_GAPFILL,
-                    mm3_per_mm      => $mm3_per_mm,
-                ), @lines;
-                $_->simplify($flow->scaled_width/3) for @paths;
-                
-                $self->thin_fills->append(@paths);
-            }
-        }
-        
-        # check what's left
-        @$gaps = @{diff_ex(
-            [ map @$_, @$gaps ],
-            [ map @$_, @this_width ],
-        )};
+        # where $pwidth < thickness < 2*$pspacing, infill with width = 1.5*$pwidth
+        # where 0.5*$pwidth < thickness < $pwidth, infill with width = 0.5*$pwidth
+        $fill_gaps->($pwidth, 2*$pspacing, unscale 1.5*$pwidth);
+        $fill_gaps->(0.5*$pwidth, $pwidth, unscale 0.5*$pwidth);
     }
 }
 
@@ -342,7 +324,8 @@ sub prepare_fill_surfaces {
         $_->surface_type(S_TYPE_INTERNAL) for @{$self->fill_surfaces->filter_by_type(S_TYPE_TOP)};
     }
     if ($self->config->bottom_solid_layers == 0) {
-        $_->surface_type(S_TYPE_INTERNAL) for @{$self->fill_surfaces->filter_by_type(S_TYPE_BOTTOM)};
+        $_->surface_type(S_TYPE_INTERNAL)
+            for @{$self->fill_surfaces->filter_by_type(S_TYPE_BOTTOM)}, @{$self->fill_surfaces->filter_by_type(S_TYPE_BOTTOMBRIDGE)};
     }
         
     # turn too small internal regions into solid regions according to the user setting
@@ -360,7 +343,7 @@ sub process_external_surfaces {
     my $margin = scale &Slic3r::EXTERNAL_INFILL_MARGIN;
     
     my @bottom = ();
-    foreach my $surface (grep $_->surface_type == S_TYPE_BOTTOM, @surfaces) {
+    foreach my $surface (grep $_->is_bottom, @surfaces) {
         my $grown = $surface->expolygon->offset_ex(+$margin);
         
         # detect bridge direction before merging grown surfaces otherwise adjacent bridges
@@ -403,7 +386,7 @@ sub process_external_surfaces {
     }
     
     # subtract the new top surfaces from the other non-top surfaces and re-add them
-    my @other = grep $_->surface_type != S_TYPE_TOP && $_->surface_type != S_TYPE_BOTTOM, @surfaces;
+    my @other = grep $_->surface_type != S_TYPE_TOP && !$_->is_bottom, @surfaces;
     foreach my $group (@{Slic3r::Surface::Collection->new(@other)->group}) {
         push @new_surfaces, map $group->[0]->clone(expolygon => $_), @{diff_ex(
             [ map $_->p, @$group ],

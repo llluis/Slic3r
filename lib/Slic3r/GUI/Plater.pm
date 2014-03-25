@@ -408,6 +408,7 @@ sub load_model_objects {
             $o->add_instance(offset => [ @{$self->{config}->print_center} ]);
         }
     
+        $self->{print}->auto_assign_extruders($o);
         $self->{print}->add_model_object($o);
     }
     
@@ -632,6 +633,7 @@ sub split_object {
     # create a bogus Model object, we only need to instantiate the new Model::Object objects
     my $new_model = Slic3r::Model->new;
     
+    my @model_objects = ();
     foreach my $mesh (@new_meshes) {
         $mesh->repair;
         
@@ -658,8 +660,12 @@ sub split_object {
         }
         # we need to center this single object around origin
         $model_object->center_around_origin;
-        $self->load_model_objects($model_object);
+        push @model_objects, $model_object;
     }
+    
+    # load all model objects at once, otherwise the plate would be rearranged after each one
+    # causing original positions not to be kept
+    $self->load_model_objects(@model_objects);
 }
 
 sub export_gcode {
@@ -670,16 +676,31 @@ sub export_gcode {
         return;
     }
     
-    # get config before spawning the thread because it needs GetParent and it's not available there
-    our $config          = $self->skeinpanel->config;
-    our $extra_variables = $self->skeinpanel->extra_variables;
+    # It looks like declaring a local $SIG{__WARN__} prevents the ugly
+    # "Attempt to free unreferenced scalar" warning...
+    local $SIG{__WARN__} = Slic3r::GUI::warning_catcher($self);
+    
+    # apply config and validate print
+    my $config = $self->skeinpanel->config;
+    eval {
+        # this will throw errors if config is not valid
+        $config->validate;
+        $self->{print}->apply_config($config);
+        $self->{print}->validate;
+    };
+    
+    # apply extra variables
+    {
+        my $extra = $self->skeinpanel->extra_variables;
+        $self->{print}->placeholder_parser->set($_, $extra->{$_}) for keys %$extra;
+    }
     
     # select output file
     $self->{output_file} = $main::opt{output};
     {
-        $self->{output_file} = $self->skeinpanel->init_print->expanded_output_filepath($self->{output_file}, $self->{model}->objects->[0]->input_file);
-        my $dlg = Wx::FileDialog->new($self, 'Save G-code file as:', Slic3r::GUI->output_path(dirname($self->{output_file})),
-            basename($self->{output_file}), &Slic3r::GUI::SkeinPanel::FILE_WILDCARDS->{gcode}, wxFD_SAVE);
+        my $output_file = $self->{print}->expanded_output_filepath($self->{output_file});
+        my $dlg = Wx::FileDialog->new($self, 'Save G-code file as:', Slic3r::GUI->output_path(dirname($output_file)),
+            basename($output_file), &Slic3r::GUI::SkeinPanel::FILE_WILDCARDS->{gcode}, wxFD_SAVE);
         if ($dlg->ShowModal != wxID_OK) {
             $dlg->Destroy;
             return;
@@ -692,10 +713,6 @@ sub export_gcode {
     
     $self->statusbar->StartBusy;
     
-    # It looks like declaring a local $SIG{__WARN__} prevents the ugly
-    # "Attempt to free unreferenced scalar" warning...
-    local $SIG{__WARN__} = Slic3r::GUI::warning_catcher($self);
-    
     if ($Slic3r::have_threads) {
         @_ = ();
         
@@ -704,8 +721,6 @@ sub export_gcode {
         
         $self->{export_thread} = threads->create(sub {
             $_thread_self->export_gcode2(
-                $config,
-                $extra_variables,
                 $_thread_self->{output_file},
                 progressbar     => sub { Wx::PostEvent($_thread_self, Wx::PlThreadEvent->new(-1, $PROGRESS_BAR_EVENT, shared_clone([@_]))) },
                 message_dialog  => sub { Wx::PostEvent($_thread_self, Wx::PlThreadEvent->new(-1, $MESSAGE_DIALOG_EVENT, shared_clone([@_]))) },
@@ -727,8 +742,6 @@ sub export_gcode {
         });
     } else {
         $self->export_gcode2(
-            $config,
-            $extra_variables,
             $self->{output_file},
             progressbar => sub {
                 my ($percent, $message) = @_;
@@ -747,7 +760,7 @@ sub export_gcode {
 
 sub export_gcode2 {
     my $self = shift;
-    my ($config, $extra_variables, $output_file, %params) = @_;
+    my ($output_file, %params) = @_;
     local $SIG{'KILL'} = sub {
         Slic3r::debugf "Exporting cancelled; exiting thread...\n";
         Slic3r::thread_cleanup();
@@ -756,16 +769,7 @@ sub export_gcode2 {
     
     my $print = $self->{print};
     
-    
     eval {
-        # this will throw errors if config is not valid
-        $config->validate;
-        
-        $print->apply_config($config);
-        $print->apply_extra_variables($extra_variables);
-        
-        $print->validate;
-        
         {
             my @warnings = ();
             local $SIG{__WARN__} = sub { push @warnings, $_[0] };
@@ -840,7 +844,7 @@ sub _get_export_file {
     
     my $output_file = $main::opt{output};
     {
-        $output_file = $self->skeinpanel->init_print->expanded_output_filepath($output_file, $self->{model}->objects->[0]->input_file);
+        $output_file = $self->{print}->expanded_output_filepath($output_file);
         $output_file =~ s/\.gcode$/$suffix/i;
         my $dlg = Wx::FileDialog->new($self, "Save $format file as:", dirname($output_file),
             basename($output_file), &Slic3r::GUI::SkeinPanel::MODEL_WILDCARD, wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
@@ -912,6 +916,8 @@ sub update {
         $print_object->delete_all_copies;
         $print_object->add_copy(@{$_->offset}) for @{$model_object->instances};
     }
+    
+    $self->{canvas}->Refresh;
 }
 
 sub on_config_change {
@@ -1164,6 +1170,7 @@ sub object_settings_dialog {
     if (!defined $obj_idx) {
         ($obj_idx, undef) = $self->selected_object;
     }
+    my $model_object = $self->{model}->objects->[$obj_idx];
     
     # validate config before opening the settings dialog because
     # that dialog can't be closed if validation fails, but user
@@ -1172,9 +1179,20 @@ sub object_settings_dialog {
     
     my $dlg = Slic3r::GUI::Plater::ObjectSettingsDialog->new($self,
 		object          => $self->{objects}[$obj_idx],
-		model_object    => $self->{model}->objects->[$obj_idx],
+		model_object    => $model_object,
 	);
 	$dlg->ShowModal;
+	
+	# update thumbnail since parts may have changed
+	if ($dlg->PartsChanged) {
+    	$self->make_thumbnail($obj_idx);
+	}
+	
+	# update print
+	if ($dlg->PartsChanged || $dlg->PartSettingsChanged) {
+        $self->{print}->delete_object($obj_idx);
+        $self->{print}->add_model_object($model_object, $obj_idx);
+    }
 }
 
 sub object_list_changed {
