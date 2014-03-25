@@ -174,7 +174,7 @@ sub new {
         EVT_TOOL($self, TB_VIEW, sub { $_[0]->object_preview_dialog });
         EVT_TOOL($self, TB_SETTINGS, sub { $_[0]->object_settings_dialog });
     } else {
-        EVT_BUTTON($self, $self->{btn_load}, \&add);
+        EVT_BUTTON($self, $self->{btn_add}, \&add);
         EVT_BUTTON($self, $self->{btn_remove}, sub { $self->remove() }); # explicitly pass no argument to remove
         EVT_BUTTON($self, $self->{btn_reset}, \&reset);
         EVT_BUTTON($self, $self->{btn_arrange}, \&arrange);
