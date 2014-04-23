@@ -1,5 +1,5 @@
 @echo off
-call C:\CitrusPerl\bin\citrusvars.bat
+call C:\Perl\CitrusPerl\bin\citrusvars.bat
 
 Title Slic3r llluis master
 
