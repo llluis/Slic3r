@@ -1,7 +1,7 @@
 package Slic3r::GCode;
 use Moo;
 
-use List::Util qw(min first);
+use List::Util qw(min max first);
 use Slic3r::ExtrusionPath ':roles';
 use Slic3r::Flow ':roles';
 use Slic3r::Geometry qw(epsilon scale unscale scaled_epsilon points_coincide PI X Y B);
@@ -27,6 +27,7 @@ has 'speed'              => (is => 'rw');
 has '_extrusion_axis'    => (is => 'rw');
 has '_retract_lift'      => (is => 'rw');
 has 'extruders'          => (is => 'ro', default => sub {{}});
+has 'multiple_extruders' => (is => 'rw', default => sub {0});
 has 'extruder'           => (is => 'rw');
 has 'speeds'             => (is => 'lazy');  # mm/min
 has 'external_mp'        => (is => 'rw');
@@ -55,6 +56,11 @@ sub set_extruders {
         $self->extruders->{$i} = my $e = Slic3r::Extruder->new_from_config($self->print_config, $i);
         $self->enable_wipe(1) if $e->wipe;
     }
+    
+    # we enable support for multiple extruder if any extruder greater than 0 is used
+    # (even if prints only uses that one) since we need to output Tx commands
+    # first extruder has index 0
+    $self->multiple_extruders(max(@$extruder_ids) > 0);
 }
 
 sub _build_speeds {
@@ -80,11 +86,6 @@ my %role_speeds = (
     &EXTR_ROLE_SKIRT                        => 'perimeter',
     &EXTR_ROLE_GAPFILL                      => 'gap_fill',
 );
-
-sub multiple_extruders {
-    my $self = shift;
-    return (keys %{$self->extruders}) > 1;
-}
 
 sub set_shift {
     my ($self, @shift) = @_;
@@ -339,32 +340,14 @@ sub extrude_path {
     
     # extrude arc or line
     $gcode .= ";_BRIDGE_FAN_START\n" if $path->is_bridge;
-    my $path_length = 0;
+    my $path_length = unscale $path->length;
     {
-        my $local_F = $F;
-        foreach my $line (@{$path->lines}) {
-            $path_length += my $line_length = unscale $line->length;
-            
-            # calculate extrusion length for this line
-            my $E = 0;
-            $E = $self->extruder->extrude($e * $line_length) if $e;
-            
-            # compose G-code line
-            my $point = $line->b;
-            $gcode .= sprintf "G1 X%.3f Y%.3f",
-                ($point->x * &Slic3r::SCALING_FACTOR) + $self->shift_x - $self->extruder->extruder_offset->[X], 
-                ($point->y * &Slic3r::SCALING_FACTOR) + $self->shift_y - $self->extruder->extruder_offset->[Y];  #**
-            $gcode .= sprintf(" %s%.5f", $self->_extrusion_axis, $E)
-                if $E;
-            $gcode .= " F$local_F"
-                if $local_F;
-            $gcode .= " ; $description"
-                if $self->print_config->gcode_comments;
-            $gcode .= "\n";
-            
-            # only include F in the first line
-            $local_F = 0;
-        }
+        $gcode .= $path->gcode($self->extruder, $e, $F,
+            $self->shift_x - $self->extruder->extruder_offset->[X],
+            $self->shift_y - $self->extruder->extruder_offset->[Y],
+            $self->_extrusion_axis,
+            $self->print_config->gcode_comments ? " ; $description" : "");
+
         if ($self->enable_wipe) {
             $self->wipe_path($path->polyline->clone);
             $self->wipe_path->reverse;

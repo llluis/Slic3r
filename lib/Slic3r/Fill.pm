@@ -13,7 +13,7 @@ use Slic3r::Fill::OctagramSpiral;
 use Slic3r::Fill::PlanePath;
 use Slic3r::Fill::Rectilinear;
 use Slic3r::Flow ':roles';
-use Slic3r::Geometry qw(X Y PI scale chained_path);
+use Slic3r::Geometry qw(X Y PI scale chained_path deg2rad);
 use Slic3r::Geometry::Clipper qw(union union_ex diff diff_ex intersection_ex offset offset2);
 use Slic3r::Surface ':types';
 
@@ -62,7 +62,7 @@ sub make_fill {
     # in case of bridge surfaces, the ones with defined angle will be attached to the ones
     # without any angle (shouldn't this logic be moved to process_external_surfaces()?)
     {
-        my @surfaces_with_bridge_angle = grep defined $_->bridge_angle, @{$layerm->fill_surfaces};
+        my @surfaces_with_bridge_angle = grep { $_->bridge_angle >= 0 } @{$layerm->fill_surfaces};
         
         # group surfaces by distinct properties
         my @groups = @{$layerm->fill_surfaces->group};
@@ -111,13 +111,13 @@ sub make_fill {
         }
         
         # give priority to bridges
-        @groups = sort { defined $a->[0]->bridge_angle ? -1 : 0 } @groups;
+        @groups = sort { ($a->[0]->bridge_angle >= 0) ? -1 : 0 } @groups;
         
         foreach my $group (@groups) {
             my $union_p = union([ map $_->p, @$group ], 1);
             
             # subtract surfaces having a defined bridge_angle from any other
-            if (@surfaces_with_bridge_angle && !defined $group->[0]->bridge_angle) {
+            if (@surfaces_with_bridge_angle && $group->[0]->bridge_angle < 0) {
                 $union_p = diff(
                     $union_p,
                     [ map $_->p, @surfaces_with_bridge_angle ],
@@ -182,11 +182,9 @@ sub make_fill {
         next if $surface->surface_type == S_TYPE_INTERNALVOID;
         my $filler          = $layerm->config->fill_pattern;
         my $density         = $fill_density;
-        my $flow            = ($surface->surface_type == S_TYPE_TOP)
-            ? $layerm->flow(FLOW_ROLE_TOP_SOLID_INFILL)
-            : $surface->is_solid
-                ? $solid_infill_flow
-                : $infill_flow;
+        my $role = ($surface->surface_type == S_TYPE_TOP) ? FLOW_ROLE_TOP_SOLID_INFILL
+            : $surface->is_solid ? FLOW_ROLE_SOLID_INFILL
+            : FLOW_ROLE_INFILL;
         my $is_bridge       = $layerm->id > 0 && $surface->is_bridge;
         my $is_solid        = $surface->is_solid;
         
@@ -196,7 +194,6 @@ sub make_fill {
             $filler = $layerm->config->solid_fill_pattern;
             if ($is_bridge) {
                 $filler = 'rectilinear';
-                $flow = $layerm->flow(FLOW_ROLE_SOLID_INFILL, 1);
             } elsif ($surface->surface_type == S_TYPE_INTERNALSOLID) {
                 $filler = 'rectilinear';
             }
@@ -204,19 +201,26 @@ sub make_fill {
             next SURFACE unless $density > 0;
         }
         
+        my $h = $surface->thickness == -1 ? $layerm->height : $surface->thickness;
+        my $flow = $layerm->region->flow(
+            $role,
+            $h,
+            $is_bridge,
+            $layerm->id == 0,
+        );
+        
         my $f = $self->filler($filler);
         $f->layer_id($layerm->id);
-        $f->angle($layerm->config->fill_angle);
+        $f->angle(deg2rad($layerm->config->fill_angle));
         my ($params, @polylines) = $f->fill_surface(
             $surface,
-            density => $density/100,
-            flow    => $flow,
+            density         => $density/100,
+            flow            => $flow,
+            layer_height    => $h,
         );
         next unless @polylines;
         
-        my $h = $surface->thickness;
-        $h = $layerm->height if $h == -1;
-        my $mm3_per_mm = $params->{flow}->mm3_per_mm($h);
+        my $mm3_per_mm = $flow->mm3_per_mm($h);
         
         # save into layer
         push @fills, my $collection = Slic3r::ExtrusionPath::Collection->new;

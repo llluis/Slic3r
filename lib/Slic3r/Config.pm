@@ -12,6 +12,9 @@ our @Ignore = qw(duplicate_x duplicate_y multiply_x multiply_y support_material_
 
 our $Options = print_config_def();
 
+# overwrite the hard-coded readonly value (this information is not available in XS)
+$Options->{threads}{readonly} = !$Slic3r::have_threads;
+
 # generate accessors
 {
     no strict 'refs';
@@ -55,9 +58,13 @@ sub new_from_cli {
     
     my $self = $class->new;
     foreach my $opt_key (keys %args) {
-        if ($opt_key =~ /^(?:print_center|bed_size|duplicate_grid|extruder_offset|retract_layer_change|wipe)$/) {
+        my $opt_def = $Options->{$opt_key};
+        
+        # we use set_deserialize() for bool options since GetOpt::Long doesn't handle 
+        # arrays of boolean values
+        if ($opt_key =~ /^(?:print_center|bed_size|duplicate_grid|extruder_offset)$/ || $opt_def->{type} eq 'bool') {
             $self->set_deserialize($opt_key, $args{$opt_key});
-        } elsif (my $shortcut = $Options->{$opt_key}{shortcut}) {
+        } elsif (my $shortcut = $opt_def->{shortcut}) {
             $self->set($_, $args{$opt_key}) for @$shortcut;
         } else {
             $self->set($opt_key, $args{$opt_key});

@@ -552,6 +552,7 @@ sub generate_toolpaths {
                     Slic3r::Surface->new(expolygon => $expolygon, surface_type => S_TYPE_INTERNAL),
                     density     => $interface_density,
                     flow        => $interface_flow,
+                    layer_height => $layer->height,
                     complete    => 1,
                 );
                 my $mm3_per_mm = $params->{flow}->mm3_per_mm($layer->height);
@@ -602,6 +603,7 @@ sub generate_toolpaths {
                     Slic3r::Surface->new(expolygon => $expolygon, surface_type => S_TYPE_INTERNAL),
                     density     => $density,
                     flow        => $base_flow,
+                    layer_height => $layer->height,
                     complete    => 1,
                 );
                 my $mm3_per_mm = $params->{flow}->mm3_per_mm($layer->height);
@@ -645,6 +647,9 @@ sub generate_toolpaths {
 sub generate_pillars_shape {
     my ($self, $contact, $support_z, $shape) = @_;
     
+    # this prevents supplying an empty point set to BoundingBox constructor
+    return if !%$contact;
+    
     my $pillar_size     = scale PILLAR_SIZE;
     my $pillar_spacing  = scale PILLAR_SPACING;
     
@@ -656,7 +661,7 @@ sub generate_pillars_shape {
             [$pillar_size, $pillar_size],
             [0, $pillar_size],
         );
-    
+        
         my @pillars = ();
         my $bb = Slic3r::Geometry::BoundingBox->new_from_points([ map @$_, map @$_, values %$contact ]);
         for (my $x = $bb->x_min; $x <= $bb->x_max-$pillar_size; $x += $pillar_spacing) {

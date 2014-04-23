@@ -7,7 +7,7 @@ use strict;
 use warnings;
 require v5.10;
 
-our $VERSION = "1.0.1-dev";
+our $VERSION = "1.1.1";
 
 our $debug = 0;
 sub debugf {
@@ -59,6 +59,7 @@ use Slic3r::GCode::VibrationLimit;
 use Slic3r::Geometry qw(PI);
 use Slic3r::Geometry::Clipper;
 use Slic3r::Layer;
+use Slic3r::Layer::BridgeDetector;
 use Slic3r::Layer::Region;
 use Slic3r::Line;
 use Slic3r::Model;
@@ -81,6 +82,7 @@ use constant SMALL_PERIMETER_LENGTH => (6.5 / SCALING_FACTOR) * 2 * PI;
 use constant LOOP_CLIPPING_LENGTH_OVER_NOZZLE_DIAMETER => 0.15;
 use constant INFILL_OVERLAP_OVER_SPACING  => 0.45;
 use constant EXTERNAL_INFILL_MARGIN => 3;
+use constant INSET_OVERLAP_TOLERANCE => 0.2;
 
 sub parallelize {
     my %params = @_;

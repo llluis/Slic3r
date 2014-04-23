@@ -25,25 +25,16 @@ has 'fill_maker'        => (is => 'lazy');
 has '_state'            => (is => 'ro', default => sub { Slic3r::Print::State->new });
 
 sub BUILD {
-    my $self = shift;
- 	
- 	# translate meshes so that we work with smaller coordinates
+    my ($self) = @_;
+    
+    # Compute the translation to be applied to our meshes so that we work with smaller coordinates
  	{
- 	    # compute the bounding box of the supplied meshes
- 	    my @meshes = map $self->model_object->volumes->[$_]->mesh,
- 	                    map @$_,
- 	                    grep defined $_,
- 	                    @{$self->region_volumes};
- 	   
- 	    my $bb = @meshes
- 	        ? $meshes[0]->bounding_box
- 	        : Slic3r::Geometry::BoundingBoxf3->new;
- 	    $bb->merge($_->bounding_box) for @meshes[1..$#meshes];
+ 	    my $bb = $self->model_object->bounding_box;
  	    
  	    # Translate meshes so that our toolpath generation algorithms work with smaller
  	    # XY coordinates; this translation is an optimization and not strictly required.
- 	    # However, this also aligns object to Z = 0, which on the contrary is required
- 	    # since we don't assume input is already aligned.
+ 	    # A cloned mesh will be aligned to 0 before slicing in _slice_region() since we
+ 	    # don't assume it's already aligned and we don't alter the original position in model.
  	    # We store the XY translation so that we can place copies correctly in the output G-code
  	    # (copies are expressed in G-code coordinates and this translation is not publicly exposed).
  	    $self->_copies_shift(Slic3r::Point->new_scale($bb->x_min, $bb->y_min));
@@ -54,7 +45,7 @@ sub BUILD {
  	    $scaled_bb->scale(1 / &Slic3r::SCALING_FACTOR);
  	    $self->size($scaled_bb->size);
  	}
-}
+ }
 
 sub _build_fill_maker {
     my $self = shift;
@@ -575,7 +566,7 @@ sub clip_fill_surfaces {
     # We only want infill under ceilings; this is almost like an
     # internal support material.
     
-    my $additional_margin = scale 3;
+    my $additional_margin = scale 3*0;
     
     my $overhangs = [];  # arrayref of polygons
     for my $layer_id (reverse 0..$#{$self->layers}) {
@@ -614,10 +605,11 @@ sub clip_fill_surfaces {
         # (thus we also consider perimeters)
         if ($layer_id > 0) {
             my $solid = diff(
-                [ map @$_, @{$layer->slices} ],
+                [ map $_->p, map @{$_->fill_surfaces}, @{$layer->regions} ],
                 [ map $_->p, @layer_internal ],
             );
             $overhangs = offset($solid, +$additional_margin);
+            
             push @$overhangs, map $_->p, @new_internal;  # propagate upper overhangs
         }
     }

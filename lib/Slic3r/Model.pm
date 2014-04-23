@@ -82,6 +82,11 @@ sub set_material {
     );
 }
 
+sub get_material {
+    my ($self, $material_id) = @_;
+    return $self->materials->{$material_id};
+}
+
 sub duplicate_objects_grid {
     my ($self, $grid, $distance) = @_;
     
@@ -218,6 +223,17 @@ sub center_instances_around_point {
     }
 }
 
+sub align_instances_to_origin {
+    my ($self) = @_;
+    
+    my $bb = $self->bounding_box;
+    return if !defined $bb;
+    
+    my $new_center = $bb->size;
+    $new_center->translate(-$new_center->x/2, -$new_center->y/2);  #//
+    $self->center_instances_around_point($new_center);
+}
+
 sub translate {
     my $self = shift;
     my @shift = @_;
@@ -309,6 +325,7 @@ has 'instances'             => (is => 'rw');
 has 'config'                => (is => 'rw', default => sub { Slic3r::Config->new });
 has 'layer_height_ranges'   => (is => 'rw', default => sub { [] }); # [ z_min, z_max, layer_height ]
 has '_bounding_box'         => (is => 'rw');
+has 'origin_translation'    => (is => 'ro', default => sub { Slic3r::Point->new });  # translation vector applied by center_around_origin() 
 
 sub add_volume {
     my $self = shift;
@@ -342,6 +359,11 @@ sub add_volume {
             object => $self,
             %args,
         );
+    }
+    
+    if (defined $new_volume->material_id && !defined $self->model->get_material($new_volume->material_id)) {
+        # TODO: this should be a trigger on Volume::material_id
+        $self->model->set_material($new_volume->material_id);
     }
     
     push @{$self->volumes}, $new_volume;
@@ -446,6 +468,7 @@ sub center_around_origin {
     $shift[Y] -= $size->y/2;  #//
     
     $self->translate(@shift);
+    $self->origin_translation->translate(@shift[X,Y]);
     
     if (defined $self->instances) {
         foreach my $instance (@{ $self->instances }) {

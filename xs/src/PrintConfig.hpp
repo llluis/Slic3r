@@ -75,6 +75,7 @@ class PrintConfigDef
         Options["bed_temperature"].sidetext = "°C";
         Options["bed_temperature"].cli = "bed-temperature=i";
         Options["bed_temperature"].full_label = "Bed temperature";
+        Options["bed_temperature"].min = 0;
         Options["bed_temperature"].max = 300;
 
         Options["bottom_solid_layers"].type = coInt;
@@ -312,6 +313,7 @@ class PrintConfigDef
         Options["first_layer_bed_temperature"].tooltip = "Heated build plate temperature for the first layer. Set this to zero to disable bed temperature control commands in the output.";
         Options["first_layer_bed_temperature"].sidetext = "°C";
         Options["first_layer_bed_temperature"].cli = "first-layer-bed-temperature=i";
+        Options["first_layer_bed_temperature"].max = 0;
         Options["first_layer_bed_temperature"].max = 300;
 
         Options["first_layer_extrusion_width"].type = coFloatOrPercent;
@@ -340,6 +342,7 @@ class PrintConfigDef
         Options["first_layer_temperature"].tooltip = "Extruder temperature for first layer. If you want to control temperature manually during print, set this to zero to disable temperature control commands in the output file.";
         Options["first_layer_temperature"].sidetext = "°C";
         Options["first_layer_temperature"].cli = "first-layer-temperature=i@";
+        Options["first_layer_temperature"].max = 0;
         Options["first_layer_temperature"].max = 400;
 
         Options["g0"].type = coBool;
@@ -399,10 +402,9 @@ class PrintConfigDef
         Options["infill_extruder"].type = coInt;
         Options["infill_extruder"].label = "Infill extruder";
         Options["infill_extruder"].category = "Extruders";
-        Options["infill_extruder"].tooltip = "The extruder to use when printing infill. First extruder is 1, while zero means use default extruder.";
-        Options["infill_extruder"].sidetext = "(leave 0 for default)";
+        Options["infill_extruder"].tooltip = "The extruder to use when printing infill.";
         Options["infill_extruder"].cli = "infill-extruder=i";
-        Options["infill_extruder"].min = 0;
+        Options["infill_extruder"].min = 1;
 
         Options["infill_extrusion_width"].type = coFloatOrPercent;
         Options["infill_extrusion_width"].label = "Infill";
@@ -524,11 +526,10 @@ class PrintConfigDef
         Options["perimeter_extruder"].type = coInt;
         Options["perimeter_extruder"].label = "Perimeter extruder";
         Options["perimeter_extruder"].category = "Extruders";
-        Options["perimeter_extruder"].tooltip = "The extruder to use when printing perimeters. First extruder is 1, while zero means use default extruder.";
-        Options["perimeter_extruder"].sidetext = "(leave 0 for default)";
+        Options["perimeter_extruder"].tooltip = "The extruder to use when printing perimeters. First extruder is 1.";
         Options["perimeter_extruder"].cli = "perimeter-extruder=i";
         Options["perimeter_extruder"].aliases.push_back("perimeters_extruder");
-        Options["perimeter_extruder"].min = 0;
+        Options["perimeter_extruder"].min = 1;
 
         Options["perimeter_extrusion_width"].type = coFloatOrPercent;
         Options["perimeter_extrusion_width"].label = "Perimeters";
@@ -774,10 +775,9 @@ class PrintConfigDef
         Options["support_material_extruder"].type = coInt;
         Options["support_material_extruder"].label = "Support material extruder";
         Options["support_material_extruder"].category = "Extruders";
-        Options["support_material_extruder"].tooltip = "The extruder to use when printing support material. This affects brim and raft too. First extruder is 1, while zero means use default extruder.";
-        Options["support_material_extruder"].sidetext = "(leave 0 for default)";
+        Options["support_material_extruder"].tooltip = "The extruder to use when printing support material. This affects brim and raft too.";
         Options["support_material_extruder"].cli = "support-material-extruder=i";
-        Options["support_material_extruder"].min = 0;
+        Options["support_material_extruder"].min = 1;
 
         Options["support_material_extrusion_width"].type = coFloatOrPercent;
         Options["support_material_extrusion_width"].label = "Support material";
@@ -789,10 +789,9 @@ class PrintConfigDef
         Options["support_material_interface_extruder"].type = coInt;
         Options["support_material_interface_extruder"].label = "Support material interface extruder";
         Options["support_material_interface_extruder"].category = "Extruders";
-        Options["support_material_interface_extruder"].tooltip = "The extruder to use when printing support material interface. This affects raft too. First extruder is 1, while zero means use default extruder.";
-        Options["support_material_interface_extruder"].sidetext = "(leave 0 for default)";
+        Options["support_material_interface_extruder"].tooltip = "The extruder to use when printing support material interface. This affects raft too.";
         Options["support_material_interface_extruder"].cli = "support-material-interface-extruder=i";
-        Options["support_material_interface_extruder"].min = 0;
+        Options["support_material_interface_extruder"].min = 1;
 
         Options["support_material_interface_layers"].type = coInt;
         Options["support_material_interface_layers"].label = "Interface layers";
@@ -850,6 +849,7 @@ class PrintConfigDef
         Options["temperature"].sidetext = "°C";
         Options["temperature"].cli = "temperature=i@";
         Options["temperature"].full_label = "Temperature";
+        Options["temperature"].max = 0;
         Options["temperature"].max = 400;
 
         Options["thin_walls"].type = coBool;
@@ -940,6 +940,21 @@ class DynamicPrintConfig : public DynamicConfig
     DynamicPrintConfig() {
         this->def = &PrintConfigDef::def;
     };
+    
+    void normalize() {
+        if (this->has("extruder")) {
+            int extruder = this->option("extruder")->getInt();
+            this->erase("extruder");
+            if (!this->has("infill_extruder"))
+                this->option("infill_extruder", true)->setInt(extruder);
+            if (!this->has("perimeter_extruder"))
+                this->option("perimeter_extruder", true)->setInt(extruder);
+            if (!this->has("support_material_extruder"))
+                this->option("support_material_extruder", true)->setInt(extruder);
+            if (!this->has("support_material_interface_extruder"))
+                this->option("support_material_interface_extruder", true)->setInt(extruder);
+        }
+    };
 };
 
 class StaticPrintConfig : public virtual StaticConfig
@@ -948,9 +963,6 @@ class StaticPrintConfig : public virtual StaticConfig
     StaticPrintConfig() {
         this->def = &PrintConfigDef::def;
     };
-    
-    protected:
-    void prepare_extruder_option(const t_config_option_key opt_key, DynamicPrintConfig& other);
 };
 
 class PrintObjectConfig : public virtual StaticPrintConfig
@@ -987,13 +999,13 @@ class PrintObjectConfig : public virtual StaticPrintConfig
         this->support_material.value                             = false;
         this->support_material_angle.value                       = 0;
         this->support_material_enforce_layers.value              = 0;
-        this->support_material_extruder.value                    = 0;
+        this->support_material_extruder.value                    = 1;
         this->support_material_extrusion_width.value             = 0;
         this->support_material_extrusion_width.percent           = false;
-        this->support_material_interface_extruder.value          = 0;
+        this->support_material_interface_extruder.value          = 1;
         this->support_material_interface_layers.value            = 3;
         this->support_material_interface_spacing.value           = 0;
-        this->support_material_pattern.value                     = smpHoneycomb;
+        this->support_material_pattern.value                     = smpPillars;
         this->support_material_spacing.value                     = 2.5;
         this->support_material_speed.value                       = 60;
         this->support_material_threshold.value                   = 0;
@@ -1021,8 +1033,6 @@ class PrintObjectConfig : public virtual StaticPrintConfig
         
         return NULL;
     };
-    
-    void apply(const ConfigBase &other, bool ignore_nonexistent = false);
 };
 
 class PrintRegionConfig : public virtual StaticPrintConfig
@@ -1053,11 +1063,11 @@ class PrintRegionConfig : public virtual StaticPrintConfig
         this->fill_angle.value                                   = 45;
         this->fill_density.value                                 = 40;
         this->fill_pattern.value                                 = ipHoneycomb;
-        this->infill_extruder.value                              = 0;
+        this->infill_extruder.value                              = 1;
         this->infill_extrusion_width.value                       = 0;
         this->infill_extrusion_width.percent                     = false;
         this->infill_every_layers.value                          = 1;
-        this->perimeter_extruder.value                           = 0;
+        this->perimeter_extruder.value                           = 1;
         this->perimeter_extrusion_width.value                    = 0;
         this->perimeter_extrusion_width.percent                  = false;
         this->perimeters.value                                   = 3;
@@ -1094,8 +1104,6 @@ class PrintRegionConfig : public virtual StaticPrintConfig
         
         return NULL;
     };
-    
-    void apply(const ConfigBase &other, bool ignore_nonexistent = false);
 };
 
 class PrintConfig : public virtual StaticPrintConfig
@@ -1397,12 +1405,6 @@ class FullPrintConfig : public PrintObjectConfig, public PrintRegionConfig, publ
         if ((opt = PrintRegionConfig::option(opt_key, create)) != NULL) return opt;
         if ((opt = PrintConfig::option(opt_key, create)) != NULL) return opt;
         return NULL;
-    };
-    
-    void apply(const ConfigBase &other, bool ignore_nonexistent = false) {
-        PrintObjectConfig::apply(other, ignore_nonexistent);
-        PrintRegionConfig::apply(other, ignore_nonexistent);
-        PrintConfig::apply(other, ignore_nonexistent);
     };
 };
 

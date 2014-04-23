@@ -4,7 +4,7 @@ use strict;
 use warnings;
 
 use Slic3r::XS;
-use Test::More tests => 99;
+use Test::More tests => 112;
 
 foreach my $config (Slic3r::Config->new, Slic3r::Config::Full->new) {
     $config->set('layer_height', 0.3);
@@ -33,11 +33,13 @@ foreach my $config (Slic3r::Config->new, Slic3r::Config::Full->new) {
     ok abs($config->get_abs_value('first_layer_height') - 0.15) < 1e-4, 'set/get relative floatOrPercent';
     is $config->serialize('first_layer_height'), '50%', 'serialize relative floatOrPercent';
     
-    $config->set('print_center', [50,80]);
+    ok $config->set('print_center', [50,80]), 'valid point coordinates';
     is_deeply $config->get('print_center'), [50,80], 'set/get point';
     is $config->serialize('print_center'), '50,80', 'serialize point';
     $config->set_deserialize('print_center', '20,10');
     is_deeply $config->get('print_center'), [20,10], 'deserialize point';
+    ok !$config->set('print_center', ['t',80]), 'invalid point X';
+    ok !$config->set('print_center', [50,'t']), 'invalid point Y';
     
     $config->set('use_relative_e_distances', 1);
     is $config->get('use_relative_e_distances'), 1, 'set/get bool';
@@ -60,6 +62,11 @@ foreach my $config (Slic3r::Config->new, Slic3r::Config::Full->new) {
     is $config->serialize('extruder_offset'), '10x20,30x45', 'serialize points';
     $config->set_deserialize('extruder_offset', '20x10');
     is_deeply $config->get('extruder_offset'), [[20,10]], 'deserialize points';
+    {
+        my @values = ([10,20]);
+        $values[2] = [10,20];  # implicitely extend array; this is not the same as explicitely assigning undef to second item
+        ok !$config->set('extruder_offset', \@values), 'reject undef points';
+    }
     
     # truncate ->get() to first decimal digit
     $config->set('nozzle_diameter', [0.2,3]);
@@ -69,12 +76,22 @@ foreach my $config (Slic3r::Config->new, Slic3r::Config::Full->new) {
     is_deeply [ map int($_*10)/10, @{$config->get('nozzle_diameter')} ], [0.1,0.4], 'deserialize floats';
     $config->set_deserialize('nozzle_diameter', '3');
     is_deeply [ map int($_*10)/10, @{$config->get('nozzle_diameter')} ], [3], 'deserialize a single float';
+    {
+        my @values = (0.4);
+        $values[2] = 2;  # implicitely extend array; this is not the same as explicitely assigning undef to second item
+        ok !$config->set('nozzle_diameter', \@values), 'reject undef floats';
+    }
     
     $config->set('temperature', [180,210]);
     is_deeply $config->get('temperature'), [180,210], 'set/get ints';
     is $config->serialize('temperature'), '180,210', 'serialize ints';
     $config->set_deserialize('temperature', '195,220');
     is_deeply $config->get('temperature'), [195,220], 'deserialize ints';
+    {
+        my @values = (180);
+        $values[2] = 200;  # implicitely extend array; this is not the same as explicitely assigning undef to second item
+        ok !$config->set('temperature', \@values), 'reject undef ints';
+    }
     
     $config->set('wipe', [1,0]);
     is_deeply $config->get('wipe'), [1,0], 'set/get bools';
@@ -84,12 +101,24 @@ foreach my $config (Slic3r::Config->new, Slic3r::Config::Full->new) {
     is $config->serialize('wipe'), '1,0', 'serialize bools';
     $config->set_deserialize('wipe', '0,1,1');
     is_deeply $config->get('wipe'), [0,1,1], 'deserialize bools';
+    $config->set_deserialize('retract_layer_change', 0);
+    is_deeply $config->get('retract_layer_change'), [0], 'deserialize bools from non-string value';
+    {
+        my @values = (1);
+        $values[2] = 1;  # implicitely extend array; this is not the same as explicitely assigning undef to second item
+        ok !$config->set('wipe', \@values), 'reject undef bools';
+    }
     
     $config->set('post_process', ['foo','bar']);
     is_deeply $config->get('post_process'), ['foo','bar'], 'set/get strings';
     is $config->serialize('post_process'), 'foo;bar', 'serialize strings';
     $config->set_deserialize('post_process', 'bar;baz');
     is_deeply $config->get('post_process'), ['bar','baz'], 'deserialize strings';
+    {
+        my @values = ('foo');
+        $values[2] = 'bar';  # implicitely extend array; this is not the same as explicitely assigning undef to second item
+        ok !$config->set('post_process', \@values), 'reject undef strings';
+    }
     
     is_deeply [ sort @{$config->get_keys} ], [ sort keys %{$config->as_hash} ], 'get_keys and as_hash';
 }
@@ -127,70 +156,22 @@ foreach my $config (Slic3r::Config->new, Slic3r::Config::Full->new) {
 }
 
 {
-    {
-        my $config = Slic3r::Config->new;
-        $config->set('infill_extruder', 2);
-        my $config2 = Slic3r::Config::PrintRegion->new;
-        $config2->apply($config);
-        is $config2->get('infill_extruder'), $config->get('infill_extruder'),
-            'non-zero infill_extruder is applied';
-    }
-    {
-        my $config = Slic3r::Config->new;
-        $config->set('infill_extruder', 0);
-        my $config2 = Slic3r::Config::PrintRegion->new;
-        $config2->set('infill_extruder', 3);
-        $config2->apply($config);
-        isnt $config2->get('infill_extruder'), $config->get('infill_extruder'),
-            'zero infill_extruder is not applied';
-    }
-    {
-        my $config = Slic3r::Config->new;
-        $config->set('extruder', 3);
-        my $config2 = Slic3r::Config::PrintRegion->new;
-        $config2->set('infill_extruder', 2);
-        $config2->apply($config);
-        is $config2->get('infill_extruder'), 2, 'extruder does not overwrite non-zero role extruders';
-        is $config2->get('perimeter_extruder'), 3, 'extruder overwrites zero role extruders';
-    }
-}
-
-{
-    {
-        my $config = Slic3r::Config->new;
-        $config->set('support_material_extruder', 2);
-        my $config2 = Slic3r::Config::PrintObject->new;
-        $config2->apply($config);
-        is $config2->get('support_material_extruder'), $config->get('support_material_extruder'),
-            'non-zero support_material_extruder is applied';
-    }
-    {
-        my $config = Slic3r::Config->new;
-        $config->set('support_material_extruder', 0);
-        my $config2 = Slic3r::Config::PrintObject->new;
-        $config2->set('support_material_extruder', 3);
-        $config2->apply($config);
-        isnt $config2->get('support_material_extruder'), $config->get('support_material_extruder'),
-            'zero support_material_extruder is not applied';
-    }
-    {
-        my $config = Slic3r::Config->new;
-        $config->set('extruder', 3);
-        my $config2 = Slic3r::Config::PrintObject->new;
-        $config2->set('support_material_extruder', 2);
-        $config2->apply($config);
-        is $config2->get('support_material_extruder'), 2, 'extruder does not overwrite non-zero role extruders';
-        is $config2->get('support_material_interface_extruder'), 3, 'extruder overwrites zero role extruders';
-    }
-}
-
-{
     my $config = Slic3r::Config->new;
     # the pair [0,0] is part of the test, since it checks whether the 0x0 serialized value is correctly parsed
     $config->set('extruder_offset', [ [0,0], [20,0], [0,20] ]);
     my $config2 = Slic3r::Config->new;
     $config2->apply($config);
     is_deeply $config->get('extruder_offset'), $config2->get('extruder_offset'), 'apply dynamic over dynamic';
+}
+
+{
+    my $config = Slic3r::Config->new;
+    $config->set('extruder', 2);
+    $config->set('perimeter_extruder', 3);
+    $config->normalize;
+    ok !$config->has('extruder'), 'extruder option is removed after normalize()';
+    is $config->get('infill_extruder'), 2, 'undefined extruder is populated with default extruder';
+    is $config->get('perimeter_extruder'), 3, 'defined extruder is not overwritten by default extruder';
 }
 
 __END__

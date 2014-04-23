@@ -180,7 +180,7 @@ ConfigBase::set(t_config_option_key opt_key, SV* value) {
         const size_t len = av_len(av)+1;
         for (size_t i = 0; i < len; i++) {
             SV** elem = av_fetch(av, i, 0);
-            if (!looks_like_number(*elem)) return false;
+            if (elem == NULL || !looks_like_number(*elem)) return false;
             values.push_back(SvNV(*elem));
         }
         optv->values = values;
@@ -193,7 +193,7 @@ ConfigBase::set(t_config_option_key opt_key, SV* value) {
         const size_t len = av_len(av)+1;
         for (size_t i = 0; i < len; i++) {
             SV** elem = av_fetch(av, i, 0);
-            if (!looks_like_number(*elem)) return false;
+            if (elem == NULL || !looks_like_number(*elem)) return false;
             values.push_back(SvIV(*elem));
         }
         optv->values = values;
@@ -205,6 +205,7 @@ ConfigBase::set(t_config_option_key opt_key, SV* value) {
         const size_t len = av_len(av)+1;
         for (size_t i = 0; i < len; i++) {
             SV** elem = av_fetch(av, i, 0);
+            if (elem == NULL) return false;
             optv->values.push_back(std::string(SvPV_nolen(*elem), SvCUR(*elem)));
         }
     } else if (ConfigOptionPoint* optv = dynamic_cast<ConfigOptionPoint*>(opt)) {
@@ -216,7 +217,7 @@ ConfigBase::set(t_config_option_key opt_key, SV* value) {
         for (size_t i = 0; i < len; i++) {
             SV** elem = av_fetch(av, i, 0);
             Pointf point;
-            if (!point.from_SV(*elem)) return false;
+            if (elem == NULL || !point.from_SV(*elem)) return false;
             values.push_back(point);
         }
         optv->values = values;
@@ -228,12 +229,24 @@ ConfigBase::set(t_config_option_key opt_key, SV* value) {
         const size_t len = av_len(av)+1;
         for (size_t i = 0; i < len; i++) {
             SV** elem = av_fetch(av, i, 0);
+            if (elem == NULL) return false;
             optv->values.push_back(SvTRUE(*elem));
         }
     } else {
         if (!opt->deserialize( std::string(SvPV_nolen(value)) )) return false;
     }
     return true;
+}
+
+/* This method is implemented as a workaround for this typemap bug:
+   https://rt.cpan.org/Public/Bug/Display.html?id=94110 */
+bool
+ConfigBase::set_deserialize(const t_config_option_key opt_key, SV* str) {
+    size_t len;
+    const char * c = SvPV(str, len);
+    std::string value(c, len);
+    
+    return this->set_deserialize(opt_key, value);
 }
 #endif
 
