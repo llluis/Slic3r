@@ -7,7 +7,7 @@ use strict;
 use warnings;
 require v5.10;
 
-our $VERSION = "1.0.1";
+our $VERSION = "1.0.1-llluis";
 our $debug = 0;
 sub debugf {
     printf @_ if $debug;
