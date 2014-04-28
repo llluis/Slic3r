@@ -8,7 +8,6 @@ use warnings;
 require v5.10;
 
 our $VERSION = "1.1.1";
-$VERSION .= "-llluis";
 
 our $debug = 0;
 sub debugf {
