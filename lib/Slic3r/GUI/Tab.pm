@@ -493,7 +493,8 @@ sub build {
         {
             title => 'Options for support material and raft',
             options => [qw(support_material_pattern support_material_spacing support_material_angle
-                support_material_interface_layers support_material_interface_spacing)],
+                support_material_interface_layers support_material_interface_spacing
+                dont_support_bridges)],
         },
     ]);
     
@@ -742,7 +743,7 @@ sub _build_extruder_pages {
         # extend options
         foreach my $opt_key ($self->_extruder_options) {
             my $values = $self->{config}->get($opt_key);
-            $values->[$extruder_idx] = $default_config->get_at($opt_key, 0);
+            $values->[$extruder_idx] //= $default_config->get_at($opt_key, 0);
             $self->{config}->set($opt_key, $values)
                 or die "Unable to extend $opt_key";
         }

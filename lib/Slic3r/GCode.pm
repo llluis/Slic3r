@@ -53,7 +53,7 @@ sub set_extruders {
     my ($self, $extruder_ids) = @_;
     
     foreach my $i (@$extruder_ids) {
-        $self->extruders->{$i} = my $e = Slic3r::Extruder->new_from_config($self->print_config, $i);
+        $self->extruders->{$i} = my $e = Slic3r::Extruder->new($i, $self->print_config);
         $self->enable_wipe(1) if $e->wipe;
     }
     
@@ -253,7 +253,7 @@ sub extrude_loop {
         foreach my $path (@{$extrusion_path->intersect_expolygons($self->_layer_overhangs)}) {
             $path = $path->clone;
             $path->role(EXTR_ROLE_OVERHANG_PERIMETER);
-            $path->mm3_per_mm($self->region->flow(FLOW_ROLE_PERIMETER, -1, 1)->mm3_per_mm(-1));
+            $path->mm3_per_mm($self->region->flow(FLOW_ROLE_PERIMETER, -1, 1, 0, undef, $self->layer->object)->mm3_per_mm(-1));
             push @paths, $path;
         }
         
@@ -343,8 +343,8 @@ sub extrude_path {
     my $path_length = unscale $path->length;
     {
         $gcode .= $path->gcode($self->extruder, $e, $F,
-            $self->shift_x - $self->extruder->extruder_offset->[X],
-            $self->shift_y - $self->extruder->extruder_offset->[Y],
+            $self->shift_x - $self->extruder->extruder_offset->x,
+            $self->shift_y - $self->extruder->extruder_offset->y,  #,,
             $self->_extrusion_axis,
             $self->print_config->gcode_comments ? " ; $description" : "");
 
@@ -508,8 +508,8 @@ sub retract {
             $gcode .= $self->G1(@$lift);
         }
     }
-    $self->extruder->retracted($self->extruder->retracted + $length);
-    $self->extruder->restart_extra($restart_extra);
+    $self->extruder->set_retracted($self->extruder->retracted + $length);
+    $self->extruder->set_restart_extra($restart_extra);
     $self->lifted($self->_retract_lift) if $lift;
     
     # reset extrusion distance during retracts
@@ -547,8 +547,8 @@ sub unretract {
             $gcode .= " ; compensate retraction" if $self->print_config->gcode_comments;
             $gcode .= "\n";
         }
-        $self->extruder->retracted(0);
-        $self->extruder->restart_extra(0);
+        $self->extruder->set_retracted(0);
+        $self->extruder->set_restart_extra(0);
     }
     
     return $gcode;
@@ -558,7 +558,7 @@ sub reset_e {
     my ($self) = @_;
     return "" if $self->print_config->gcode_flavor =~ /^(?:mach3|makerware|sailfish)$/;
     
-    $self->extruder->E(0) if $self->extruder;
+    $self->extruder->set_E(0) if $self->extruder;
     return sprintf "G92 %s0%s\n", $self->_extrusion_axis, ($self->print_config->gcode_comments ? ' ; reset extrusion distance' : '')
         if $self->_extrusion_axis && !$self->print_config->use_relative_e_distances;
 }
@@ -587,8 +587,8 @@ sub _G0_G1 {
     
     if ($point) {
         $gcode .= sprintf " X%.3f Y%.3f", 
-            ($point->x * &Slic3r::SCALING_FACTOR) + $self->shift_x - $self->extruder->extruder_offset->[X], 
-            ($point->y * &Slic3r::SCALING_FACTOR) + $self->shift_y - $self->extruder->extruder_offset->[Y]; #**
+            ($point->x * &Slic3r::SCALING_FACTOR) + $self->shift_x - $self->extruder->extruder_offset->x,
+            ($point->y * &Slic3r::SCALING_FACTOR) + $self->shift_y - $self->extruder->extruder_offset->y; #**
         $self->last_pos($point->clone);
     }
     if (defined $z && (!defined $self->z || $z != $self->z)) {

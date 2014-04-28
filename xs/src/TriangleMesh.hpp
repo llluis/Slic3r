@@ -29,6 +29,9 @@ class TriangleMesh
     void scale(float factor);
     void scale(std::vector<double> versor);
     void translate(float x, float y, float z);
+    void rotate_x(float angle);
+    void rotate_y(float angle);
+    void rotate_z(float angle);
     void align_to_origin();
     void rotate(double angle, Point* center);
     TriangleMeshPtrs split() const;
@@ -36,6 +39,7 @@ class TriangleMesh
     void horizontal_projection(ExPolygons &retval) const;
     void convex_hull(Polygon* hull);
     void bounding_box(BoundingBoxf3* bb) const;
+    void reset_repair_stats();
     stl_file stl;
     bool repaired;
     
@@ -92,6 +96,7 @@ class TriangleMeshSlicer
     stl_vertex* v_scaled_shared;
     void make_loops(std::vector<IntersectionLine> &lines, Polygons* loops);
     void make_expolygons(const Polygons &loops, ExPolygons* slices);
+    void make_expolygons_simple(std::vector<IntersectionLine> &lines, ExPolygons* slices);
     void make_expolygons(std::vector<IntersectionLine> &lines, ExPolygons* slices);
 };
 

@@ -1,8 +1,16 @@
+#include "BoundingBox.hpp"
 #include "ExPolygon.hpp"
 #include "Geometry.hpp"
 #include "Polygon.hpp"
 #include "Line.hpp"
 #include "ClipperUtils.hpp"
+#include "polypartition.h"
+#ifdef SLIC3RXS
+#include "perlglue.hpp"
+#endif
+
+#include <algorithm>
+#include <list>
 
 namespace Slic3r {
 
@@ -47,7 +55,7 @@ ExPolygon::translate(double x, double y)
 }
 
 void
-ExPolygon::rotate(double angle, Point* center)
+ExPolygon::rotate(double angle, const Point &center)
 {
     contour.rotate(angle, center);
     for (Polygons::iterator it = holes.begin(); it != holes.end(); ++it) {
@@ -76,10 +84,10 @@ ExPolygon::is_valid() const
 }
 
 bool
-ExPolygon::contains_line(const Line* line) const
+ExPolygon::contains_line(const Line &line) const
 {
     Polylines pl;
-    pl.push_back(*line);
+    pl.push_back(line);
     
     Polylines pl_out;
     diff(pl, *this, pl_out);
@@ -87,7 +95,7 @@ ExPolygon::contains_line(const Line* line) const
 }
 
 bool
-ExPolygon::contains_point(const Point* point) const
+ExPolygon::contains_point(const Point &point) const
 {
     if (!this->contour.contains_point(point)) return false;
     for (Polygons::const_iterator it = this->holes.begin(); it != this->holes.end(); ++it) {
@@ -158,7 +166,143 @@ ExPolygon::medial_axis(double max_width, double min_width, Polylines* polylines)
     intersection(*polylines, *this, *polylines);
 }
 
+void
+ExPolygon::get_trapezoids(Polygons* polygons) const
+{
+    ExPolygons expp;
+    expp.push_back(*this);
+    boost::polygon::get_trapezoids(*polygons, expp);
+}
+
+void
+ExPolygon::get_trapezoids(Polygons* polygons, double angle) const
+{
+    ExPolygon clone = *this;
+    clone.rotate(PI/2 - angle, Point(0,0));
+    clone.get_trapezoids(polygons);
+    for (Polygons::iterator polygon = polygons->begin(); polygon != polygons->end(); ++polygon)
+        polygon->rotate(-(PI/2 - angle), Point(0,0));
+}
+
+// This algorithm may return more trapezoids than necessary
+// (i.e. it may break a single trapezoid in several because
+// other parts of the object have x coordinates in the middle)
+void
+ExPolygon::get_trapezoids2(Polygons* polygons) const
+{
+    // get all points of this ExPolygon
+    Points pp = *this;
+    
+    // build our bounding box
+    BoundingBox bb(pp);
+    
+    // get all x coordinates
+    std::vector<coord_t> xx;
+    xx.reserve(pp.size());
+    for (Points::const_iterator p = pp.begin(); p != pp.end(); ++p)
+        xx.push_back(p->x);
+    std::sort(xx.begin(), xx.end());
+    
+    // find trapezoids by looping from first to next-to-last coordinate
+    for (std::vector<coord_t>::const_iterator x = xx.begin(); x != xx.end()-1; ++x) {
+        coord_t next_x = *(x + 1);
+        if (*x == next_x) continue;
+        
+        // build rectangle
+        Polygon poly;
+        poly.points.resize(4);
+        poly[0].x = *x;
+        poly[0].y = bb.min.y;
+        poly[1].x = next_x;
+        poly[1].y = bb.min.y;
+        poly[2].x = next_x;
+        poly[2].y = bb.max.y;
+        poly[3].x = *x;
+        poly[3].y = bb.max.y;
+        
+        // intersect with this expolygon
+        Polygons trapezoids;
+        intersection(poly, *this, trapezoids);
+        
+        // append results to return value
+        polygons->insert(polygons->end(), trapezoids.begin(), trapezoids.end());
+    }
+}
+
+void
+ExPolygon::get_trapezoids2(Polygons* polygons, double angle) const
+{
+    ExPolygon clone = *this;
+    clone.rotate(PI/2 - angle, Point(0,0));
+    clone.get_trapezoids2(polygons);
+    for (Polygons::iterator polygon = polygons->begin(); polygon != polygons->end(); ++polygon)
+        polygon->rotate(-(PI/2 - angle), Point(0,0));
+}
+
+void
+ExPolygon::triangulate(Polygons* polygons) const
+{
+    // first make trapezoids
+    Polygons trapezoids;
+    this->get_trapezoids2(&trapezoids);
+    
+    // then triangulate each trapezoid
+    for (Polygons::iterator polygon = trapezoids.begin(); polygon != trapezoids.end(); ++polygon)
+        polygon->triangulate_convex(polygons);
+}
+
+void
+ExPolygon::triangulate2(Polygons* polygons) const
+{
+    // convert polygons
+    std::list<TPPLPoly> input;
+    
+    // contour
+    {
+        TPPLPoly p;
+        p.Init(this->contour.points.size());
+        for (Points::const_iterator point = this->contour.points.begin(); point != this->contour.points.end(); ++point) {
+            p[ point-this->contour.points.begin() ].x = point->x;
+            p[ point-this->contour.points.begin() ].y = point->y;
+        }
+        p.SetHole(false);
+        input.push_back(p);
+    }
+    
+    // holes
+    for (Polygons::const_iterator hole = this->holes.begin(); hole != this->holes.end(); ++hole) {
+        TPPLPoly p;
+        p.Init(hole->points.size());
+        for (Points::const_iterator point = hole->points.begin(); point != hole->points.end(); ++point) {
+            p[ point-hole->points.begin() ].x = point->x;
+            p[ point-hole->points.begin() ].y = point->y;
+        }
+        p.SetHole(true);
+        input.push_back(p);
+    }
+    
+    // perform triangulation
+    std::list<TPPLPoly> output;
+    int res = TPPLPartition().Triangulate_MONO(&input, &output);
+    if (res != 1) CONFESS("Triangulation failed");
+    
+    // convert output polygons
+    for (std::list<TPPLPoly>::iterator poly = output.begin(); poly != output.end(); ++poly) {
+        long num_points = poly->GetNumPoints();
+        Polygon p;
+        p.points.resize(num_points);
+        for (long i = 0; i < num_points; ++i) {
+            p.points[i].x = (*poly)[i].x;
+            p.points[i].y = (*poly)[i].y;
+        }
+        polygons->push_back(p);
+    }
+}
+
 #ifdef SLIC3RXS
+
+REGISTER_CLASS(ExPolygon, "ExPolygon");
+
 SV*
 ExPolygon::to_AV() {
     const unsigned int num_holes = this->holes.size();
@@ -176,14 +320,14 @@ ExPolygon::to_AV() {
 SV*
 ExPolygon::to_SV_ref() {
     SV* sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::ExPolygon::Ref", this );
+    sv_setref_pv( sv, perl_class_name_ref(this), this );
     return sv;
 }
 
 SV*
 ExPolygon::to_SV_clone_ref() const {
     SV* sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::ExPolygon", new ExPolygon(*this) );
+    sv_setref_pv( sv, perl_class_name(this), new ExPolygon(*this) );
     return sv;
 }
 
@@ -219,8 +363,8 @@ void
 ExPolygon::from_SV_check(SV* expoly_sv)
 {
     if (sv_isobject(expoly_sv) && (SvTYPE(SvRV(expoly_sv)) == SVt_PVMG)) {
-        if (!sv_isa(expoly_sv, "Slic3r::ExPolygon") && !sv_isa(expoly_sv, "Slic3r::ExPolygon::Ref"))
-            CONFESS("Not a valid Slic3r::ExPolygon object");
+        if (!sv_isa(expoly_sv, perl_class_name(this)) && !sv_isa(expoly_sv, perl_class_name_ref(this)))
+          CONFESS("Not a valid %s object", perl_class_name(this));
         // a XS ExPolygon was supplied
         *this = *(ExPolygon *)SvIV((SV*)SvRV( expoly_sv ));
     } else {

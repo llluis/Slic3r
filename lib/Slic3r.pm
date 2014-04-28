@@ -7,7 +7,7 @@ use strict;
 use warnings;
 require v5.10;
 
-our $VERSION = "1.1.1";
+our $VERSION = "1.1.2-dev";
 
 our $debug = 0;
 sub debugf {
@@ -140,6 +140,7 @@ sub thread_cleanup {
     *Slic3r::Config::PrintRegion::DESTROY   = sub {};
     *Slic3r::ExPolygon::DESTROY             = sub {};
     *Slic3r::ExPolygon::Collection::DESTROY = sub {};
+    *Slic3r::Extruder::DESTROY              = sub {};
     *Slic3r::ExtrusionLoop::DESTROY         = sub {};
     *Slic3r::ExtrusionPath::DESTROY         = sub {};
     *Slic3r::ExtrusionPath::Collection::DESTROY = sub {};
@@ -148,6 +149,7 @@ sub thread_cleanup {
     *Slic3r::Geometry::BoundingBoxf3::DESTROY = sub {};
     *Slic3r::Line::DESTROY                  = sub {};
     *Slic3r::Point::DESTROY                 = sub {};
+    *Slic3r::Pointf::DESTROY                = sub {};
     *Slic3r::Pointf3::DESTROY               = sub {};
     *Slic3r::Polygon::DESTROY               = sub {};
     *Slic3r::Polyline::DESTROY              = sub {};

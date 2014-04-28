@@ -1,8 +1,12 @@
-#include <sstream>
 #include "ExtrusionEntity.hpp"
 #include "ExtrusionEntityCollection.hpp"
 #include "ExPolygonCollection.hpp"
 #include "ClipperUtils.hpp"
+#include "Extruder.hpp"
+#include <sstream>
+#ifdef SLIC3RXS
+#include "perlglue.hpp"
+#endif
 
 namespace Slic3r {
 
@@ -43,16 +47,16 @@ ExtrusionPath::reverse()
     this->polyline.reverse();
 }
 
-Point*
+Point
 ExtrusionPath::first_point() const
 {
-    return new Point(this->polyline.points.front());
+    return this->polyline.points.front();
 }
 
-Point*
+Point
 ExtrusionPath::last_point() const
 {
-    return new Point(this->polyline.points.back());
+    return this->polyline.points.back();
 }
 
 void
@@ -102,8 +106,11 @@ ExtrusionPath::_inflate_collection(const Polylines &polylines, ExtrusionEntityCo
 }
 
 #ifdef SLIC3RXS
+
+REGISTER_CLASS(ExtrusionPath, "ExtrusionPath");
+
 std::string
-ExtrusionPath::gcode(SV* extruder, double e, double F,
+ExtrusionPath::gcode(Extruder* extruder, double e, double F,
     double xofs, double yofs, std::string extrusion_axis,
     std::string gcode_line_suffix) const
 {
@@ -121,19 +128,7 @@ ExtrusionPath::gcode(SV* extruder, double e, double F,
         const double line_length = line_it->length() * SCALING_FACTOR;
 
         // calculate extrusion length for this line
-        double E = 0;
-        if (e != 0) {
-            PUSHMARK(SP);
-            XPUSHs(extruder);
-            XPUSHs(sv_2mortal(newSVnv(e * line_length)));
-            PUTBACK;
-
-            const int count = call_method("extrude", G_SCALAR);
-            SPAGAIN;
-
-            // TODO: check that count is 1
-            E = POPn;
-        }
+        double E = (e == 0) ? 0 : extruder->extrude(e * line_length);
 
         // compose G-code line
 
@@ -200,16 +195,20 @@ ExtrusionLoop::reverse()
     // no-op
 }
 
-Point*
+Point
 ExtrusionLoop::first_point() const
 {
-    return new Point(this->polygon.points.front());
+    return this->polygon.points.front();
 }
 
-Point*
+Point
 ExtrusionLoop::last_point() const
 {
-    return new Point(this->polygon.points.front());  // in polygons, first == last
+    return this->polygon.points.front();  // in polygons, first == last
 }
+
+#ifdef SLIC3RXS
+REGISTER_CLASS(ExtrusionLoop, "ExtrusionLoop");
+#endif
 
 }

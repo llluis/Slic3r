@@ -139,6 +139,11 @@ class PrintConfigDef
         Options["disable_fan_first_layers"].cli = "disable-fan-first-layers=i";
         Options["disable_fan_first_layers"].max = 1000;
 
+        Options["dont_support_bridges"].type = coBool;
+        Options["dont_support_bridges"].label = "Don't support bridges";
+        Options["dont_support_bridges"].tooltip = "Experimental option for preventing support material from being generated under bridged areas.";
+        Options["dont_support_bridges"].cli = "dont-support-bridges!";
+
         Options["duplicate_distance"].type = coFloat;
         Options["duplicate_distance"].label = "Distance between copies";
         Options["duplicate_distance"].tooltip = "Distance used for the auto-arrange feature of the plater.";
@@ -318,7 +323,7 @@ class PrintConfigDef
 
         Options["first_layer_extrusion_width"].type = coFloatOrPercent;
         Options["first_layer_extrusion_width"].label = "First layer";
-        Options["first_layer_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for first layer. You can use this to force fatter extrudates for better adhesion. If expressed as percentage (for example 120%) if will be computed over first layer height.";
+        Options["first_layer_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for first layer. You can use this to force fatter extrudates for better adhesion. If expressed as percentage (for example 120%) it will be computed over first layer height.";
         Options["first_layer_extrusion_width"].sidetext = "mm or % (leave 0 for default)";
         Options["first_layer_extrusion_width"].cli = "first-layer-extrusion-width=s";
         Options["first_layer_extrusion_width"].ratio_over = "first_layer_height";
@@ -409,7 +414,7 @@ class PrintConfigDef
         Options["infill_extrusion_width"].type = coFloatOrPercent;
         Options["infill_extrusion_width"].label = "Infill";
         Options["infill_extrusion_width"].category = "Extrusion Width";
-        Options["infill_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for infill. You may want to use fatter extrudates to speed up the infill and make your parts stronger. If expressed as percentage (for example 90%) if will be computed over layer height.";
+        Options["infill_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for infill. You may want to use fatter extrudates to speed up the infill and make your parts stronger. If expressed as percentage (for example 90%) it will be computed over layer height.";
         Options["infill_extrusion_width"].sidetext = "mm or % (leave 0 for default)";
         Options["infill_extrusion_width"].cli = "infill-extrusion-width=s";
 
@@ -534,7 +539,7 @@ class PrintConfigDef
         Options["perimeter_extrusion_width"].type = coFloatOrPercent;
         Options["perimeter_extrusion_width"].label = "Perimeters";
         Options["perimeter_extrusion_width"].category = "Extrusion Width";
-        Options["perimeter_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for perimeters. You may want to use thinner extrudates to get more accurate surfaces. If expressed as percentage (for example 90%) if will be computed over layer height.";
+        Options["perimeter_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for perimeters. You may want to use thinner extrudates to get more accurate surfaces. If expressed as percentage (for example 90%) it will be computed over layer height.";
         Options["perimeter_extrusion_width"].sidetext = "mm or % (leave 0 for default)";
         Options["perimeter_extrusion_width"].cli = "perimeter-extrusion-width=s";
         Options["perimeter_extrusion_width"].aliases.push_back("perimeters_extrusion_width");
@@ -693,7 +698,7 @@ class PrintConfigDef
         Options["solid_infill_every_layers"].type = coInt;
         Options["solid_infill_every_layers"].label = "Solid infill every";
         Options["solid_infill_every_layers"].category = "Infill";
-        Options["solid_infill_every_layers"].tooltip = "This feature allows to force a solid layer every given number of layers. Zero to disable.";
+        Options["solid_infill_every_layers"].tooltip = "This feature allows to force a solid layer every given number of layers. Zero to disable. You can set this to any value (for example 9999); Slic3r will automatically choose the maximum possible number of layers to combine according to nozzle diameter and layer height.";
         Options["solid_infill_every_layers"].sidetext = "layers";
         Options["solid_infill_every_layers"].cli = "solid-infill-every-layers=i";
         Options["solid_infill_every_layers"].min = 0;
@@ -701,7 +706,7 @@ class PrintConfigDef
         Options["solid_infill_extrusion_width"].type = coFloatOrPercent;
         Options["solid_infill_extrusion_width"].label = "Solid infill";
         Options["solid_infill_extrusion_width"].category = "Extrusion Width";
-        Options["solid_infill_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for infill for solid surfaces. If expressed as percentage (for example 90%) if will be computed over layer height.";
+        Options["solid_infill_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for infill for solid surfaces. If expressed as percentage (for example 90%) it will be computed over layer height.";
         Options["solid_infill_extrusion_width"].sidetext = "mm or % (leave 0 for default)";
         Options["solid_infill_extrusion_width"].cli = "solid-infill-extrusion-width=s";
 
@@ -782,7 +787,7 @@ class PrintConfigDef
         Options["support_material_extrusion_width"].type = coFloatOrPercent;
         Options["support_material_extrusion_width"].label = "Support material";
         Options["support_material_extrusion_width"].category = "Extrusion Width";
-        Options["support_material_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for support material. If expressed as percentage (for example 90%) if will be computed over layer height.";
+        Options["support_material_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for support material. If expressed as percentage (for example 90%) it will be computed over layer height.";
         Options["support_material_extrusion_width"].sidetext = "mm or % (leave 0 for default)";
         Options["support_material_extrusion_width"].cli = "support-material-extrusion-width=s";
 
@@ -878,7 +883,7 @@ class PrintConfigDef
         Options["top_infill_extrusion_width"].type = coFloatOrPercent;
         Options["top_infill_extrusion_width"].label = "Top solid infill";
         Options["top_infill_extrusion_width"].category = "Extrusion Width";
-        Options["top_infill_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for infill for top surfaces. You may want to use thinner extrudates to fill all narrow regions and get a smoother finish. If expressed as percentage (for example 90%) if will be computed over layer height.";
+        Options["top_infill_extrusion_width"].tooltip = "Set this to a non-zero value to set a manual extrusion width for infill for top surfaces. You may want to use thinner extrudates to fill all narrow regions and get a smoother finish. If expressed as percentage (for example 90%) it will be computed over layer height.";
         Options["top_infill_extrusion_width"].sidetext = "mm or % (leave 0 for default)";
         Options["top_infill_extrusion_width"].cli = "top-infill-extrusion-width=s";
 
@@ -968,6 +973,7 @@ class StaticPrintConfig : public virtual StaticConfig
 class PrintObjectConfig : public virtual StaticPrintConfig
 {
     public:
+    ConfigOptionBool                dont_support_bridges;
     ConfigOptionFloatOrPercent      extrusion_width;
     ConfigOptionFloatOrPercent      first_layer_height;
     ConfigOptionBool                infill_only_where_needed;
@@ -988,6 +994,7 @@ class PrintObjectConfig : public virtual StaticPrintConfig
     ConfigOptionInt                 support_material_threshold;
     
     PrintObjectConfig() : StaticPrintConfig() {
+        this->dont_support_bridges.value                         = true;
         this->extrusion_width.value                              = 0;
         this->extrusion_width.percent                            = false;
         this->first_layer_height.value                           = 0.35;
@@ -1012,6 +1019,7 @@ class PrintObjectConfig : public virtual StaticPrintConfig
     };
     
     ConfigOption* option(const t_config_option_key opt_key, bool create = false) {
+        if (opt_key == "dont_support_bridges")                       return &this->dont_support_bridges;
         if (opt_key == "extrusion_width")                            return &this->extrusion_width;
         if (opt_key == "first_layer_height")                         return &this->first_layer_height;
         if (opt_key == "infill_only_where_needed")                   return &this->infill_only_where_needed;

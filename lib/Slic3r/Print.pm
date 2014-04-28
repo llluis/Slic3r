@@ -714,7 +714,7 @@ sub make_skirt {
         if ($self->config->min_skirt_length > 0) {
             $extruded_length[$extruder_idx] ||= 0;
             if (!$extruders_e_per_mm[$extruder_idx]) {
-                my $extruder = Slic3r::Extruder->new_from_config($self->config, $extruder_idx);
+                my $extruder = Slic3r::Extruder->new($extruder_idx, $self->config);
                 $extruders_e_per_mm[$extruder_idx] = $extruder->e_per_mm($mm3_per_mm);
             }
             $extruded_length[$extruder_idx] += unscale $loop->length * $extruders_e_per_mm[$extruder_idx];
@@ -818,27 +818,28 @@ sub write_gcode {
     print $fh "; $_\n" foreach split /\R/, $self->config->notes;
     print $fh "\n" if $self->config->notes;
     
-    my $layer_height = $self->objects->[0]->config->layer_height;
+    my $first_object = $self->objects->[0];
+    my $layer_height = $first_object->config->layer_height;
     for my $region_id (0..$#{$self->regions}) {
         printf $fh "; perimeters extrusion width = %.2fmm\n",
-            $self->regions->[$region_id]->flow(FLOW_ROLE_PERIMETER, $layer_height)->width;
+            $self->regions->[$region_id]->flow(FLOW_ROLE_PERIMETER, $layer_height, 0, 0, undef, $first_object)->width;
         printf $fh "; infill extrusion width = %.2fmm\n",
-            $self->regions->[$region_id]->flow(FLOW_ROLE_INFILL, $layer_height)->width;
+            $self->regions->[$region_id]->flow(FLOW_ROLE_INFILL, $layer_height, 0, 0, undef, $first_object)->width;
         printf $fh "; solid infill extrusion width = %.2fmm\n",
-            $self->regions->[$region_id]->flow(FLOW_ROLE_SOLID_INFILL, $layer_height)->width;
+            $self->regions->[$region_id]->flow(FLOW_ROLE_SOLID_INFILL, $layer_height, 0, 0, undef, $first_object)->width;
         printf $fh "; top infill extrusion width = %.2fmm\n",
-            $self->regions->[$region_id]->flow(FLOW_ROLE_TOP_SOLID_INFILL, $layer_height)->width;
+            $self->regions->[$region_id]->flow(FLOW_ROLE_TOP_SOLID_INFILL, $layer_height, 0, 0, undef, $first_object)->width;
         printf $fh "; support material extrusion width = %.2fmm\n",
             $self->objects->[0]->support_material_flow->width
             if $self->has_support_material;
         printf $fh "; first layer extrusion width = %.2fmm\n",
-            $self->regions->[$region_id]->flow(FLOW_ROLE_PERIMETER, $layer_height, 0, 1)->width
+            $self->regions->[$region_id]->flow(FLOW_ROLE_PERIMETER, $layer_height, 0, 1, undef, $self->objects->[0])->width
             if $self->regions->[$region_id]->config->first_layer_extrusion_width;
         print  $fh "\n";
     }
     
     # prepare the helper object for replacing placeholders in custom G-code and output filename
-    
+    $self->placeholder_parser->update_timestamp;
     
     # set up our helper object
     my $gcodegen = Slic3r::GCode->new(

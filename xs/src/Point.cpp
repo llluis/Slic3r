@@ -1,7 +1,10 @@
-#include <cmath>
-#include <sstream>
 #include "Point.hpp"
 #include "Line.hpp"
+#include <cmath>
+#include <sstream>
+#ifdef SLIC3RXS
+#include "perlglue.hpp"
+#endif
 
 namespace Slic3r {
 
@@ -34,18 +37,12 @@ Point::translate(double x, double y)
 }
 
 void
-Point::rotate(double angle, Point* center)
+Point::rotate(double angle, const Point &center)
 {
     double cur_x = (double)this->x;
     double cur_y = (double)this->y;
-    this->x = (coord_t)round( (double)center->x + cos(angle) * (cur_x - (double)center->x) - sin(angle) * (cur_y - (double)center->y) );
-    this->y = (coord_t)round( (double)center->y + cos(angle) * (cur_y - (double)center->y) + sin(angle) * (cur_x - (double)center->x) );
-}
-
-bool
-Point::coincides_with(const Point* point) const
-{
-    return this->coincides_with(*point);
+    this->x = (coord_t)round( (double)center.x + cos(angle) * (cur_x - (double)center.x) - sin(angle) * (cur_y - (double)center.y) );
+    this->y = (coord_t)round( (double)center.y + cos(angle) * (cur_y - (double)center.y) + sin(angle) * (cur_x - (double)center.x) );
 }
 
 bool
@@ -55,22 +52,22 @@ Point::coincides_with(const Point &point) const
 }
 
 int
-Point::nearest_point_index(Points &points) const
+Point::nearest_point_index(const Points &points) const
 {
-    PointPtrs p;
+    PointConstPtrs p;
     p.reserve(points.size());
-    for (Points::iterator it = points.begin(); it != points.end(); ++it)
+    for (Points::const_iterator it = points.begin(); it != points.end(); ++it)
         p.push_back(&*it);
     return this->nearest_point_index(p);
 }
 
 int
-Point::nearest_point_index(PointPtrs &points) const
+Point::nearest_point_index(const PointConstPtrs &points) const
 {
     int idx = -1;
     double distance = -1;  // double because long is limited to 2147483647 on some platforms and it's not enough
     
-    for (PointPtrs::const_iterator it = points.begin(); it != points.end(); ++it) {
+    for (PointConstPtrs::const_iterator it = points.begin(); it != points.end(); ++it) {
         /* If the X distance of the candidate is > than the total distance of the
            best previous candidate, we know we don't want it */
         double d = pow(this->x - (*it)->x, 2);
@@ -90,30 +87,34 @@ Point::nearest_point_index(PointPtrs &points) const
     return idx;
 }
 
-Point*
-Point::nearest_point(Points points) const
+int
+Point::nearest_point_index(const PointPtrs &points) const
 {
-    return &(points.at(this->nearest_point_index(points)));
+    PointConstPtrs p;
+    p.reserve(points.size());
+    for (PointPtrs::const_iterator it = points.begin(); it != points.end(); ++it)
+        p.push_back(*it);
+    return this->nearest_point_index(p);
+}
+
+void
+Point::nearest_point(const Points &points, Point* point) const
+{
+    *point = points.at(this->nearest_point_index(points));
 }
 
 double
-Point::distance_to(const Point* point) const
+Point::distance_to(const Point &point) const
 {
-    double dx = ((double)point->x - this->x);
-    double dy = ((double)point->y - this->y);
+    double dx = ((double)point.x - this->x);
+    double dy = ((double)point.y - this->y);
     return sqrt(dx*dx + dy*dy);
-}
-
-double
-Point::distance_to(const Line* line) const
-{
-    return this->distance_to(*line);
 }
 
 double
 Point::distance_to(const Line &line) const
 {
-    if (line.a.coincides_with(&line.b)) return this->distance_to(&line.a);
+    if (line.a.coincides_with(line.b)) return this->distance_to(line.a);
     
     double n = (double)(line.b.x - line.a.x) * (double)(line.a.y - this->y)
         - (double)(line.a.x - this->x) * (double)(line.b.y - line.a.y);
@@ -135,29 +136,26 @@ Point::ccw(const Point &p1, const Point &p2) const
 }
 
 double
-Point::ccw(const Point* p1, const Point* p2) const
-{
-    return this->ccw(*p1, *p2);
-}
-
-double
 Point::ccw(const Line &line) const
 {
     return this->ccw(line.a, line.b);
 }
 
 #ifdef SLIC3RXS
+
+REGISTER_CLASS(Point, "Point");
+
 SV*
 Point::to_SV_ref() {
     SV* sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::Point::Ref", (void*)this );
+    sv_setref_pv( sv, perl_class_name_ref(this), (void*)this );
     return sv;
 }
 
 SV*
 Point::to_SV_clone_ref() const {
     SV* sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::Point", new Point(*this) );
+    sv_setref_pv( sv, perl_class_name(this), new Point(*this) );
     return sv;
 }
 
@@ -184,13 +182,33 @@ void
 Point::from_SV_check(SV* point_sv)
 {
     if (sv_isobject(point_sv) && (SvTYPE(SvRV(point_sv)) == SVt_PVMG)) {
-        if (!sv_isa(point_sv, "Slic3r::Point") && !sv_isa(point_sv, "Slic3r::Point::Ref"))
-            CONFESS("Not a valid Slic3r::Point object");
+        if (!sv_isa(point_sv, perl_class_name(this)) && !sv_isa(point_sv, perl_class_name_ref(this)))
+            CONFESS("Not a valid %s object (got %s)", perl_class_name(this), HvNAME(SvSTASH(SvRV(point_sv))));
         *this = *(Point*)SvIV((SV*)SvRV( point_sv ));
     } else {
         this->from_SV(point_sv);
     }
 }
+
+#endif
+
+void
+Pointf::scale(double factor)
+{
+    this->x *= factor;
+    this->y *= factor;
+}
+
+void
+Pointf::translate(double x, double y)
+{
+    this->x += x;
+    this->y += y;
+}
+
+#ifdef SLIC3RXS
+
+REGISTER_CLASS(Pointf, "Pointf");
 
 SV*
 Pointf::to_SV_pureperl() const {
@@ -216,20 +234,6 @@ Pointf::from_SV(SV* point_sv)
 #endif
 
 void
-Pointf::scale(double factor)
-{
-    this->x *= factor;
-    this->y *= factor;
-}
-
-void
-Pointf::translate(double x, double y)
-{
-    this->x += x;
-    this->y += y;
-}
-
-void
 Pointf3::scale(double factor)
 {
     Pointf::scale(factor);
@@ -242,5 +246,9 @@ Pointf3::translate(double x, double y, double z)
     Pointf::translate(x, y);
     this->z += z;
 }
+
+#ifdef SLIC3RXS
+REGISTER_CLASS(Pointf3, "Pointf3");
+#endif
 
 }

@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#ifdef SLIC3RXS
+#include "perlglue.hpp"
+#endif
 
 namespace Slic3r {
 
@@ -38,7 +41,7 @@ Line::translate(double x, double y)
 }
 
 void
-Line::rotate(double angle, Point* center)
+Line::rotate(double angle, const Point &center)
 {
     this->a.rotate(angle, center);
     this->b.rotate(angle, center);
@@ -53,7 +56,7 @@ Line::reverse()
 double
 Line::length() const
 {
-    return this->a.distance_to(&(this->b));
+    return this->a.distance_to(this->b);
 }
 
 Point*
@@ -82,15 +85,15 @@ Line::point_at(double distance) const
 }
 
 bool
-Line::coincides_with(const Line* line) const
+Line::coincides_with(const Line &line) const
 {
-    return this->a.coincides_with(&line->a) && this->b.coincides_with(&line->b);
+    return this->a.coincides_with(line.a) && this->b.coincides_with(line.b);
 }
 
 double
-Line::distance_to(const Point* point) const
+Line::distance_to(const Point &point) const
 {
-    return point->distance_to(this);
+    return point.distance_to(*this);
 }
 
 double
@@ -115,6 +118,9 @@ Line::vector() const
 }
 
 #ifdef SLIC3RXS
+
+REGISTER_CLASS(Line, "Line");
+
 void
 Line::from_SV(SV* line_sv)
 {
@@ -127,8 +133,8 @@ void
 Line::from_SV_check(SV* line_sv)
 {
     if (sv_isobject(line_sv) && (SvTYPE(SvRV(line_sv)) == SVt_PVMG)) {
-        if (!sv_isa(line_sv, "Slic3r::Line") && !sv_isa(line_sv, "Slic3r::Line::Ref"))
-            CONFESS("Not a valid Slic3r::Line object");
+        if (!sv_isa(line_sv, perl_class_name(this)) && !sv_isa(line_sv, perl_class_name_ref(this)))
+            CONFESS("Not a valid %s object", perl_class_name(this));
         *this = *(Line*)SvIV((SV*)SvRV( line_sv ));
     } else {
         this->from_SV(line_sv);
@@ -141,11 +147,11 @@ Line::to_AV() {
     av_extend(av, 1);
     
     SV* sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::Point::Ref", &(this->a) );
+    sv_setref_pv( sv, perl_class_name_ref(&this->a), &(this->a) );
     av_store(av, 0, sv);
     
     sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::Point::Ref", &(this->b) );
+    sv_setref_pv( sv, perl_class_name_ref(&this->b), &(this->b) );
     av_store(av, 1, sv);
     
     return newRV_noinc((SV*)av);
@@ -154,14 +160,14 @@ Line::to_AV() {
 SV*
 Line::to_SV_ref() {
     SV* sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::Line::Ref", this );
+    sv_setref_pv( sv, perl_class_name_ref(this), this );
     return sv;
 }
 
 SV*
 Line::to_SV_clone_ref() const {
     SV* sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::Line", new Line(*this) );
+    sv_setref_pv( sv, perl_class_name(this), new Line(*this) );
     return sv;
 }
 

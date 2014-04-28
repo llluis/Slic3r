@@ -1660,6 +1660,8 @@ src/ExPolygon.cpp
 src/ExPolygon.hpp
 src/ExPolygonCollection.cpp
 src/ExPolygonCollection.hpp
+src/Extruder.cpp
+src/Extruder.hpp
 src/ExtrusionEntity.cpp
 src/ExtrusionEntity.hpp
 src/ExtrusionEntityCollection.cpp
@@ -1675,6 +1677,7 @@ src/Model.hpp
 src/MultiPoint.cpp
 src/MultiPoint.hpp
 src/myinit.h
+src/perlglue.hpp
 src/Point.cpp
 src/Point.hpp
 src/Polygon.cpp
@@ -1683,6 +1686,8 @@ src/Polyline.cpp
 src/Polyline.hpp
 src/PolylineCollection.cpp
 src/PolylineCollection.hpp
+src/polypartition.cpp
+src/polypartition.h
 src/PrintConfig.cpp
 src/PrintConfig.hpp
 src/Print.cpp
@@ -1718,6 +1723,7 @@ xsp/Clipper.xsp
 xsp/Config.xsp
 xsp/ExPolygon.xsp
 xsp/ExPolygonCollection.xsp
+xsp/Extruder.xsp
 xsp/ExtrusionEntityCollection.xsp
 xsp/ExtrusionLoop.xsp
 xsp/ExtrusionPath.xsp

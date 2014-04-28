@@ -13,8 +13,8 @@ class ExPolygonCollection
     operator Polygons() const;
     void scale(double factor);
     void translate(double x, double y);
-    void rotate(double angle, Point* center);
-    bool contains_point(const Point* point) const;
+    void rotate(double angle, const Point &center);
+    bool contains_point(const Point &point) const;
     void simplify(double tolerance);
     void convex_hull(Polygon* hull) const;
 };

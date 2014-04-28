@@ -2,6 +2,9 @@
 #include "ClipperUtils.hpp"
 #include "Polygon.hpp"
 #include "Polyline.hpp"
+#ifdef SLIC3RXS
+#include "perlglue.hpp"
+#endif
 
 namespace Slic3r {
 
@@ -12,10 +15,22 @@ Polygon::operator Polygons() const
     return pp;
 }
 
-Point*
+Point&
+Polygon::operator[](Points::size_type idx)
+{
+    return this->points[idx];
+}
+
+const Point&
+Polygon::operator[](Points::size_type idx) const
+{
+    return this->points[idx];
+}
+
+Point
 Polygon::last_point() const
 {
-    return new Point(this->points.front());  // last point == first point for polygons
+    return this->points.front();  // last point == first point for polygons
 }
 
 Lines
@@ -37,7 +52,7 @@ Polygon::lines(Lines* lines) const
 }
 
 Polyline*
-Polygon::split_at(const Point* point) const
+Polygon::split_at(const Point &point) const
 {
     // find index of point
     for (Points::const_iterator it = this->points.begin(); it != this->points.end(); ++it) {
@@ -124,15 +139,15 @@ Polygon::is_valid() const
 }
 
 bool
-Polygon::contains_point(const Point* point) const
+Polygon::contains_point(const Point &point) const
 {
     // http://www.ecse.rpi.edu/Homepages/wrf/Research/Short_Notes/pnpoly.html
     bool result = false;
     Points::const_iterator i = this->points.begin();
     Points::const_iterator j = this->points.end() - 1;
     for (; i != this->points.end(); j = i++) {
-        if ( ((i->y > point->y) != (j->y > point->y))
-            && (point->x < (j->x - i->x) * (point->y - i->y) / (j->y - i->y) + i->x) )
+        if ( ((i->y > point.y) != (j->y > point.y))
+            && (point.x < (j->x - i->x) * (point.y - i->y) / (j->y - i->y) + i->x) )
             result = !result;
     }
     return result;
@@ -158,26 +173,45 @@ Polygon::simplify(double tolerance, Polygons &polygons) const
     polygons.insert(polygons.end(), pp.begin(), pp.end());
 }
 
+// Only call this on convex polygons or it will return invalid results
+void
+Polygon::triangulate_convex(Polygons* polygons) const
+{
+    for (Points::const_iterator it = this->points.begin() + 2; it != this->points.end(); ++it) {
+        Polygon p;
+        p.points.reserve(3);
+        p.points.push_back(this->points.front());
+        p.points.push_back(*(it-1));
+        p.points.push_back(*it);
+        
+        // this should be replaced with a more efficient call to a merge_collinear_segments() method
+        if (p.area() > 0) polygons->push_back(p);
+    }
+}
+
 #ifdef SLIC3RXS
+
+REGISTER_CLASS(Polygon, "Polygon");
+
 SV*
 Polygon::to_SV_ref() {
     SV* sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::Polygon::Ref", (void*)this );
+    sv_setref_pv( sv, perl_class_name_ref(this), (void*)this );
     return sv;
 }
 
 SV*
 Polygon::to_SV_clone_ref() const {
     SV* sv = newSV(0);
-    sv_setref_pv( sv, "Slic3r::Polygon", new Polygon(*this) );
+    sv_setref_pv( sv, perl_class_name(this), new Polygon(*this) );
     return sv;
 }
 
 void
 Polygon::from_SV_check(SV* poly_sv)
 {
-    if (sv_isobject(poly_sv) && !sv_isa(poly_sv, "Slic3r::Polygon") && !sv_isa(poly_sv, "Slic3r::Polygon::Ref"))
-        CONFESS("Not a valid Slic3r::Polygon object");
+    if (sv_isobject(poly_sv) && !sv_isa(poly_sv, perl_class_name(this)) && !sv_isa(poly_sv, perl_class_name_ref(this)))
+        CONFESS("Not a valid %s object", perl_class_name(this));
     
     MultiPoint::from_SV_check(poly_sv);
 }

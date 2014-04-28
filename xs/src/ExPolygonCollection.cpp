@@ -1,5 +1,8 @@
 #include "ExPolygonCollection.hpp"
 #include "Geometry.hpp"
+#ifdef SLIC3RXS
+#include "perlglue.hpp"
+#endif
 
 namespace Slic3r {
 
@@ -32,7 +35,7 @@ ExPolygonCollection::translate(double x, double y)
 }
 
 void
-ExPolygonCollection::rotate(double angle, Point* center)
+ExPolygonCollection::rotate(double angle, const Point &center)
 {
     for (ExPolygons::iterator it = expolygons.begin(); it != expolygons.end(); ++it) {
         (*it).rotate(angle, center);
@@ -40,7 +43,7 @@ ExPolygonCollection::rotate(double angle, Point* center)
 }
 
 bool
-ExPolygonCollection::contains_point(const Point* point) const
+ExPolygonCollection::contains_point(const Point &point) const
 {
     for (ExPolygons::const_iterator it = this->expolygons.begin(); it != this->expolygons.end(); ++it) {
         if (it->contains_point(point)) return true;
@@ -66,5 +69,9 @@ ExPolygonCollection::convex_hull(Polygon* hull) const
         pp.insert(pp.end(), it->contour.points.begin(), it->contour.points.end());
     Slic3r::Geometry::convex_hull(pp, hull);
 }
+
+#ifdef SLIC3RXS
+REGISTER_CLASS(ExPolygonCollection, "ExPolygon::Collection");
+#endif
 
 }

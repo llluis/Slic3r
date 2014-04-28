@@ -19,7 +19,7 @@ MultiPoint::translate(double x, double y)
 }
 
 void
-MultiPoint::rotate(double angle, Point* center)
+MultiPoint::rotate(double angle, const Point &center)
 {
     for (Points::iterator it = points.begin(); it != points.end(); ++it) {
         (*it).rotate(angle, center);
@@ -32,10 +32,10 @@ MultiPoint::reverse()
     std::reverse(this->points.begin(), this->points.end());
 }
 
-Point*
+Point
 MultiPoint::first_point() const
 {
-    return new Point(this->points.front());
+    return this->points.front();
 }
 
 double
