@@ -237,16 +237,18 @@ sub make_fill {
                         : $is_solid
                             ? (($surface->surface_type == S_TYPE_TOP) ? EXTR_ROLE_TOPSOLIDFILL : EXTR_ROLE_SOLIDFILL)
                             : EXTR_ROLE_FILL),
-                mm3_per_mm => $mm3_per_mm,
+                mm3_per_mm  => $mm3_per_mm,
+                width       => $flow->width,
+                height      => $h,
             ), @polylines,
         );
         push @fills_ordering_points, $polylines[0]->first_point;
     }
     
     # add thin fill regions
-    if ($layerm->thin_fills->count > 0) {
-        push @fills, Slic3r::ExtrusionPath::Collection->new(@{$layerm->thin_fills});
-        push @fills_ordering_points, $fills[-1]->first_point;
+    foreach my $thin_fill (@{$layerm->thin_fills}) {
+        push @fills, Slic3r::ExtrusionPath::Collection->new($thin_fill);
+        push @fills_ordering_points, $thin_fill->first_point;
     }
     
     # organize infill paths using a nearest-neighbor search
