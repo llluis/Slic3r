@@ -1,3 +1,4 @@
+#include "Geometry.hpp"
 #include "Line.hpp"
 #include "Polyline.hpp"
 #include <algorithm>
@@ -109,6 +110,16 @@ Line::direction() const
     return (atan2 == PI) ? 0
         : (atan2 < 0) ? (atan2 + PI)
         : atan2;
+}
+
+bool
+Line::parallel_to(double angle) const {
+    return Slic3r::Geometry::directions_parallel(this->direction(), angle);
+}
+
+bool
+Line::parallel_to(const Line &line) const {
+    return this->parallel_to(line.direction());
 }
 
 Vector
