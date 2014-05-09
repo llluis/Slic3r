@@ -15,6 +15,7 @@ typedef std::vector<Polygon> Polygons;
 class Polygon : public MultiPoint {
     public:
     operator Polygons() const;
+    operator Polyline() const;
     Point& operator[](Points::size_type idx);
     const Point& operator[](Points::size_type idx) const;
     Point last_point() const;
@@ -37,8 +38,6 @@ class Polygon : public MultiPoint {
     
     #ifdef SLIC3RXS
     void from_SV_check(SV* poly_sv);
-    SV* to_SV_ref();
-    SV* to_SV_clone_ref() const;
     #endif
 };
 

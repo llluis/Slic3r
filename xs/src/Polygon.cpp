@@ -2,9 +2,6 @@
 #include "ClipperUtils.hpp"
 #include "Polygon.hpp"
 #include "Polyline.hpp"
-#ifdef SLIC3RXS
-#include "perlglue.hpp"
-#endif
 
 namespace Slic3r {
 
@@ -13,6 +10,13 @@ Polygon::operator Polygons() const
     Polygons pp;
     pp.push_back(*this);
     return pp;
+}
+
+Polygon::operator Polyline() const
+{
+    Polyline polyline;
+    this->split_at_first_point(&polyline);
+    return polyline;
 }
 
 Point&
@@ -188,22 +192,7 @@ Polygon::triangulate_convex(Polygons* polygons) const
 }
 
 #ifdef SLIC3RXS
-
 REGISTER_CLASS(Polygon, "Polygon");
-
-SV*
-Polygon::to_SV_ref() {
-    SV* sv = newSV(0);
-    sv_setref_pv( sv, perl_class_name_ref(this), (void*)this );
-    return sv;
-}
-
-SV*
-Polygon::to_SV_clone_ref() const {
-    SV* sv = newSV(0);
-    sv_setref_pv( sv, perl_class_name(this), new Polygon(*this) );
-    return sv;
-}
 
 void
 Polygon::from_SV_check(SV* poly_sv)
