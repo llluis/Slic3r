@@ -3,7 +3,6 @@ install: true
 script: perl ./Build.PL
 perl:
   - "5.14"
-  - "5.12"
 branches:
   only:
-    - master
+    - stable
