@@ -646,11 +646,12 @@ class PrintConfigDef
         Options["unretract_speed"].cli = "unretract-speed=f@";
         Options["unretract_speed"].max = 1000;
 
-        Options["pressure_multiplier"].type = coFloats;
+        Options["pressure_multiplier"].type = coInts;
         Options["pressure_multiplier"].label = "Pressure advance constant";
-        Options["pressure_multiplier"].tooltip = "Pressure management multiplier. If greater than zero, it will inject or retract additional filament to control the pressure in the bowden tube. 1 means 100%. It adjusts only the amount of input raw filament that will be pushed or pulled, proportional.";
-        Options["pressure_multiplier"].sidetext = "(zero to disable)";
+        Options["pressure_multiplier"].tooltip = "Pressure management multiplier. If greater than zero, it push or pull additional filament to control the pressure in the bowden tube. It adjusts only the amount of input raw filament that will be pushed or pulled, proportional.";
+        Options["pressure_multiplier"].sidetext = "% (zero to disable)";
         Options["pressure_multiplier"].cli = "pressure-multiplier=f@";
+        Options["pressure_multiplier"].min = 0;
         Options["pressure_multiplier"].max = 200;
 
         Options["skirt_distance"].type = coFloat;
@@ -1196,7 +1197,7 @@ class PrintConfig : public virtual StaticPrintConfig
     ConfigOptionFloats              retract_restart_extra_toolchange;
     ConfigOptionInts                retract_speed;
     ConfigOptionInts                unretract_speed;
-    ConfigOptionFloats              pressure_multiplier;
+    ConfigOptionInts                pressure_multiplier;
     ConfigOptionFloat               skirt_distance;
     ConfigOptionInt                 skirt_height;
     ConfigOptionInt                 skirts;

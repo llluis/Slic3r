@@ -43,6 +43,7 @@ has 'last_fan_speed'     => (is => 'rw', default => sub {0});
 has 'wipe_path'          => (is => 'rw');
 has 'adv_last_speed'     => (is => 'rw', default => sub {0} );
 has 'adv_last_amnt'      => (is => 'rw', default => sub {0} );
+has 'adv_amnt'           => (is => 'rw', default => sub {0} );
 
 sub BUILD {
     my ($self) = @_;
@@ -320,7 +321,8 @@ sub extrude_path {
 		if (($v1 != $v2)) {
 			
 			# Advance algorithm
-			my $adv_amnt = $e * $v2**2 * ($self->extruder->pressure_multiplier/100);
+			$self->adv_amnt($e * $v2**2 * ($self->extruder->pressure_multiplier/10000)); #holds how much extra filament is currently loaded into the system
+			my $adv = $self->adv_amnt - $self->adv_last_amnt;
 
 			# Edit unretract to account for advance
 			my $eaxis = $self->_extrusion_axis;
@@ -328,24 +330,25 @@ sub extrude_path {
 							my $str = sprintf("G1 %s%.5f F$2$3$4", 
 										$eaxis,
 										($self->print_config->use_relative_e_distances ? $1 : 0) + 
-										 $self->extruder->extrude($adv_amnt - $self->adv_last_amnt));
+										 $self->extruder->extrude($adv));
 							$str .= " + pressure advance" if $self->print_config->gcode_comments;
 							$str .= "\n";
 							sprintf("%s", $str);
-					      /ge) {
+						  /ge) {
 
-  			    # There were no unretraction before
+				# There were no unretraction before
 				$gcode .= sprintf "G1 %s%.5f F%.3f",
 					$eaxis,
-					$self->extruder->extrude($adv_amnt - $self->adv_last_amnt),
-					($self->extruder->unretract_speed > 0 &&  ($adv_amnt - $self->adv_last_amnt) > 0 ) ?
+					$self->extruder->extrude($adv),
+					(($self->extruder->unretract_speed > 0) &&  ($adv > 0) ) ?
 						$self->extruder->unretract_speed_mm_min :
 						$self->extruder->retract_speed_mm_min;
 				$gcode .= " ; pressure advance"
 					if $self->print_config->gcode_comments;
 				$gcode .= "\n";
 			}
-			$self->adv_last_amnt($adv_amnt);
+
+			$self->adv_last_amnt($self->adv_amnt);
 		}
 		$self->adv_last_speed($F);
 	}
@@ -464,7 +467,10 @@ sub retract {
     my ($length, $restart_extra, $comment) = $params{toolchange}
         ? ($self->extruder->retract_length_toolchange,  $self->extruder->retract_restart_extra_toolchange,  "retract for tool change")
         : ($self->extruder->retract_length,             $self->extruder->retract_restart_extra,             "retract");
-    
+
+    # add the pressure management length
+	$length += $self->adv_amnt;
+	
     # if we already retracted, reduce the required amount of retraction
     $length -= $self->extruder->retracted;
     return "" unless $length > 0;
