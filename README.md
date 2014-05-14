@@ -2,6 +2,8 @@ Fork from Slic3r stable branch (1.0.0RC3), including recent updates from alexrj.
 
 Changes discussed in issue <a href='https://github.com/alexrj/Slic3r/issues/1677'>#1677</a>.
 
+[![Build Status](https://travis-ci.org/llluis/Slic3r.png?branch=stable)](https://travis-ci.org/llluis/Slic3r)
+
 <b>Features implemented:</b>
 * Pressure control
    * The main goal is to create a pressure control mechanism for bowden setups, controlling the different pressure in the tube based on the extrusion speed. This way, the filament will be extruded or retracted a specified amount during speed changes to compensate the different pressure required, maintaining the correct extrusion flow.
