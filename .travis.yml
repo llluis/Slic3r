@@ -9,4 +9,5 @@ branches:
   only:
     - master
     - stable
+    - alexrj
 
