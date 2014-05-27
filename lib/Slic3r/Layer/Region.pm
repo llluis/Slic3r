@@ -180,8 +180,7 @@ sub make_perimeters {
                 # and use zigzag).
                 my $w = $gap_size->[2];
                 my @filled = map {
-                    @{($_->isa('Slic3r::ExtrusionLoop') ? $_->split_at_first_point : $_)
-                        ->polyline
+                    @{($_->isa('Slic3r::ExtrusionLoop') ? $_->polygon->split_at_first_point : $_->polyline)
                         ->grow(scale $w/2)};
                 } @gap_fill;
                 @last = @{diff(\@last, \@filled)};
@@ -260,12 +259,19 @@ sub make_perimeters {
             
             my $role        = EXTR_ROLE_PERIMETER;
             my $loop_role   = EXTRL_ROLE_DEFAULT;
-            if ($is_contour ? $depth == 0 : !@{ $polynode->{children} }) {
+            
+            my $root_level  = $depth == 0;
+            my $no_children = !@{ $polynode->{children} };
+            my $is_external = $is_contour ? $root_level : $no_children;
+            my $is_internal = $is_contour ? $no_children : $root_level;
+            if ($is_external) {
                 # external perimeters are root level in case of contours
                 # and items with no children in case of holes
                 $role       = EXTR_ROLE_EXTERNAL_PERIMETER;
                 $loop_role  = EXTRL_ROLE_EXTERNAL_PERIMETER;
-            } elsif ($depth == 1 && $is_contour) {
+            } elsif ($is_contour && $is_internal) {
+                # internal perimeters are root level in case of holes
+                # and items with no children in case of contours
                 $loop_role  = EXTRL_ROLE_CONTOUR_INTERNAL_PERIMETER;
             }
             
@@ -295,7 +301,7 @@ sub make_perimeters {
                         height          => $self->height,
                     );
                 }
-        
+                
                 # reapply the nearest point search for starting point
                 # (clone because the collection gets DESTROY'ed)
                 # We allow polyline reversal because Clipper may have randomly
@@ -430,6 +436,11 @@ sub _fill_gaps {
         if ($polylines[$i]->isa('Slic3r::Polygon')) {
             my $loop = Slic3r::ExtrusionLoop->new;
             $loop->append(Slic3r::ExtrusionPath->new(polyline => $polylines[$i]->split_at_first_point, %path_args));
+            $polylines[$i] = $loop;
+        } elsif ($polylines[$i]->is_valid && $polylines[$i]->first_point->coincides_with($polylines[$i]->last_point)) {
+            # since medial_axis() now returns only Polyline objects, detect loops here
+            my $loop = Slic3r::ExtrusionLoop->new;
+            $loop->append(Slic3r::ExtrusionPath->new(polyline => $polylines[$i], %path_args));
             $polylines[$i] = $loop;
         } else {
             $polylines[$i] = Slic3r::ExtrusionPath->new(polyline => $polylines[$i], %path_args);
