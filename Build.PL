@@ -100,7 +100,7 @@ EOF
     if ($^O eq 'MSWin32' && !eval "use Math::Libm; 1") {
         system $cpanm, @cpanm_args, 'https://github.com/alexrj/Math-Libm/tarball/master';
     }
-    
+#=pod
     my %modules = (%prereqs, %recommends);
     foreach my $module (sort keys %modules) {
         my $version = $modules{$module};
@@ -134,11 +134,12 @@ EOF
                 system './xs/Build', 'distclean';
             }
         }
-        my $res = system $cpanm, @cpanm_args, '--reinstall', '--verbose', './xs';
+        my $res = system $cpanm, @cpanm_args, '--reinstall', './xs';
         if ($res != 0) {
             die "The XS/C++ code failed to compile, aborting\n";
         }
     }
+#=cut
 }
 
 if (@missing_prereqs) {
