@@ -1,81 +1,95 @@
-=pod
-    # Pressure management post-processing filter
-    my $pressure_filter = $self->gcodegen->extruder->pressure_multiplier == 99
-        ? Slic3r::GCode::PressureManagement->new(extruder => $self->gcodegen->extruder, config => $self->print->config)
-        : undef;
-        
-    # apply pressure management if enabled
-    $gcode = $self->pressure_management->process_layer($gcode)
-        if defined $self->pressure_management;
-=cut
-
 package Slic3r::GCode::PressureManagement;
 use Moo;
 
-extends 'Slic3r::GCode::Reader';
-has 'config'        => (is => 'ro', required => 1);
-has 'extruder'      => (is => 'ro', required => 1);
-has 'last_F'        => (is => 'rw', default => sub {0} );
-has 'last_amnt'     => (is => 'rw', default => sub {0} );
-has 'amnt'          => (is => 'rw', default => sub {0} );
+has 'pressure'        => (is => 'ro', required => 1);
+has 'retract_speed'   => (is => 'rw', required => 1);
+has 'unretract_speed' => (is => 'rw', required => 1);
+has 'relative'        => (is => 'rw');
+has 'last_F'          => (is => 'rw', default => sub {0});
+has 'amnt'            => (is => 'rw', default => sub {0}); #holds how much extra filament is currently loaded into the system
+has 'reader'          => (is => 'rw', default => sub { Slic3r::GCode::Reader->new });
 
-sub e_only {
-    my ($self, $args) = @_;
+sub add_e {
+    my ($line, $E, $comment) = @_;
 
-    # Check if we have a extruder movement only (retract/unretract)
-    if ((exists $args->{E}) && (!(exists $args->{X} || exists $args->{Y} || exists $args->{Z}))) {
-        return 1;
-    } else {
-        return 0;
-    }
+    # replaces only the E argument with the specified value
+    $line =~ s/\sE(\S*)\s/sprintf(" E%.5f ", $E)/ge;
+    return $line . $comment . "\n";
 }
 
 sub process_layer {
     my $self = shift;
     my ($gcode) = @_;
 
+    # variables to hold information during the loop
     my $new_gcode = "";
-    $self->parse($gcode, sub {
+    my $adv = 0;
+
+    # parse each line
+    $self->reader->parse($gcode, sub {
         my ($reader, $cmd, $args, $info) = @_;
 
-        # Advance algorithm to compensate pressure during speed change
-        if ($self->extruder->pressure_multiplier == 0) {
-            my $F = $args->{F} // $reader->F; 
+        # filter out odd commands
+        if ($cmd =~ /^G[01]$/) {
+
+            # speeds
+            my $F = $args->{F} // $reader->F;
             my $v1 = $self->last_F/60;
             my $v2 = $F/60;
 
-            # Verify change
-            if (($v1 != $v2) && ($self->e_only($args) == 0) && exists $args->{E}) {
+            # aux variables
+            my $e_only = 0;
+            my $dist_E = $info->{"dist_E"};
+            my $comm = "";
 
-                my $e = 0;
-                if ($self->config->use_relative_e_distances) {
-                    $e = $info->{new_E} / $info->{dist_XY};
-                } else {
-                    $e = $info->{dist_E} / $info->{dist_XY};
+            # Check if we have a extruder movement only (retract/unretract)
+            if ((exists $args->{E}) && (!(exists $args->{X} || exists $args->{Y} || exists $args->{Z}))) {
+                $e_only = 1;
+            }
+
+            # verify speed change
+            if (($v1 != $v2) && ($e_only == 0) && (exists $args->{E})) {
+
+                # workaround #2033
+                if ($self->relative) {
+                    $dist_E = $info->{"new_E"};
                 }
 
+                # E_per_mm
+                my $e = $dist_E / $info->{dist_XY};
+
                 # Advance algorithm
-                $self->amnt($e * $v2**2 * 0.01); #($self->extruder->pressure_multiplier/10000)); #holds how much extra filament is currently loaded into the system
-                my $adv = $self->amnt - $self->last_amnt;
-
-                $new_gcode .= sprintf "G1 %s%.5f F%.3f",
-                    $self->config->get_extrusion_axis,
-                    $adv,
-                    (($self->extruder->unretract_speed > 0) &&  ($adv > 0) ) ?
-                        $self->extruder->unretract_speed_mm_min :
-                        $self->extruder->retract_speed_mm_min;
-                $new_gcode .= " ; pressure advance"
-                    if $self->config->gcode_comments;
-                $new_gcode .= "\n";
-
-                $self->last_amnt($self->amnt);
+                my $last_amnt = $self->amnt;
+                $self->amnt($e * $v2**2 * ($self->pressure/10000));
+                $adv = $self->amnt - $last_amnt; 
+                $comm = " + pressure advance";
                 $self->last_F($F);
             }
-        }
 
-        $new_gcode .= $info->{raw} . "\n";
+            # insert the gcode line, summing up the advance amount
+            # when using absolute E, we need to filter out unretracts
+            $new_gcode .= add_e(
+                $info->{raw}, 
+                ($info->{"new_E"} // 0) + ((($e_only == 1) && ($dist_E > 0)) ? 0 : $adv),
+                $info->{comment} ? $comm : "" );
+
+            # only insert the first comment and the first line in case of relative distances
+            $comm = "";
+            if ($self->relative) {
+                $adv = 0;
+            }
+        } else {
+            # nothing to change, copy the raw line
+            $new_gcode .= $info->{raw} . "\n";
+
+            # when the absolute distance is reset, reset the advance amount to the added to the E argument
+            if ($cmd =~ /^G92$/) {
+                $adv = 0;
+            }
+        }
     });
-    
+
+    # we are done
     return $new_gcode;
 }
 

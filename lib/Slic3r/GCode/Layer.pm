@@ -11,6 +11,7 @@ has 'shift'                         => (is => 'ro', default => sub { [0,0] });
 has 'spiralvase'                    => (is => 'lazy');
 has 'vibration_limit'               => (is => 'lazy');
 has 'arc_fitting'                   => (is => 'lazy');
+has 'pressure_management'           => (is => 'lazy');
 has 'skirt_done'                    => (is => 'rw', default => sub { {} });  # print_z => 1
 has 'brim_done'                     => (is => 'rw');
 has 'second_layer_things_done'      => (is => 'rw');
@@ -37,6 +38,19 @@ sub _build_arc_fitting {
     
     return $self->print->config->gcode_arcs
         ? Slic3r::GCode::ArcFitting->new(config => $self->print->config)
+        : undef;
+}
+
+sub _build_pressure_management {
+    my $self = shift;
+    
+    my $extruder = $self->gcodegen->extruder;
+    return $extruder->pressure_multiplier > 0
+        ? Slic3r::GCode::PressureManagement->new(
+            pressure => $extruder->pressure_multiplier,
+            relative => $self->print->config->use_relative_e_distances,
+            retract_speed => $extruder->retract_speed_mm_min,
+            unretract_speed => $extruder->unretract_speed_mm_min)
         : undef;
 }
 
@@ -201,6 +215,10 @@ sub process_layer {
     $gcode = $self->arc_fitting->process($gcode)
         if $self->print->config->gcode_arcs;
     
+    # pressure management post-processing filter if enabled
+    $gcode = $self->pressure_management->process_layer($gcode)
+        if $self->gcodegen->extruder->pressure_multiplier > 0;
+
     return $gcode;
 }
 
