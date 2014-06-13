@@ -55,6 +55,12 @@ Point::coincides_with(const Point &point) const
     return this->x == point.x && this->y == point.y;
 }
 
+bool
+Point::coincides_with_epsilon(const Point &point) const
+{
+    return std::abs(this->x - point.x) < SCALED_EPSILON && std::abs(this->y - point.y) < SCALED_EPSILON;
+}
+
 int
 Point::nearest_point_index(const Points &points) const
 {
@@ -242,6 +248,9 @@ Point::from_SV_check(SV* point_sv)
         this->from_SV(point_sv);
     }
 }
+
+
+REGISTER_CLASS(Point3, "Point3");
 
 #endif
 
