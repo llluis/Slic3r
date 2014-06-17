@@ -85,6 +85,9 @@ use constant INFILL_OVERLAP_OVER_SPACING  => 0.45;
 use constant EXTERNAL_INFILL_MARGIN => 3;
 use constant INSET_OVERLAP_TOLERANCE => 0.2;
 
+# keep track of threads we created
+my @threads = ();
+
 sub parallelize {
     my %params = @_;
     
@@ -94,7 +97,13 @@ sub parallelize {
         $q->enqueue(@items, (map undef, 1..$params{threads}));
         
         my $thread_cb = sub {
+            # ignore threads created by our parent
+            @threads = ();
+            
+            # execute thread callback
             $params{thread_cb}->($q);
+            
+            # cleanup before terminating thread
             Slic3r::thread_cleanup();
             
             # This explicit exit avoids an untrappable 
@@ -112,7 +121,10 @@ sub parallelize {
         $params{collect_cb} ||= sub {};
             
         @_ = ();
-        foreach my $th (map threads->create($thread_cb), 1..$params{threads}) {
+        my @my_threads = map threads->create($thread_cb), 1..$params{threads};
+        push @threads, map $_->tid, @my_threads;
+        
+        foreach my $th (@my_threads) {
             $params{collect_cb}->($th->join);
         }
     } else {
@@ -132,6 +144,8 @@ sub parallelize {
 # object in a thread, make sure the main thread still holds a
 # reference so that it won't be destroyed in thread.
 sub thread_cleanup {
+    return if !$Slic3r::have_threads;
+    
     # prevent destruction of shared objects
     no warnings 'redefine';
     *Slic3r::Config::DESTROY                = sub {};
@@ -163,6 +177,10 @@ sub thread_cleanup {
     *Slic3r::Surface::DESTROY               = sub {};
     *Slic3r::Surface::Collection::DESTROY   = sub {};
     *Slic3r::TriangleMesh::DESTROY          = sub {};
+    
+    # detach any running thread created in the current one
+    $_->detach for grep defined($_), map threads->object($_), @threads;
+    
     return undef;  # this prevents a "Scalars leaked" warning
 }
 

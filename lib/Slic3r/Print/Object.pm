@@ -97,7 +97,10 @@ sub bounding_box {
 # this should be idempotent
 sub slice {
     my $self = shift;
-    my %params = @_;
+    
+    return if $self->step_done(STEP_SLICE);
+    $self->set_step_started(STEP_SLICE);
+    $self->print->status_cb->(10, "Processing triangulated mesh");
     
     # init layers
     {
@@ -158,9 +161,10 @@ sub slice {
             ### Slic3r::debugf "Layer %d: height = %s; slice_z = %s; print_z = %s\n", $id, $height, $slice_z, $print_z;
         
             $self->add_layer($id, $height, $print_z, $slice_z);
-            if (@{$self->layers} >= 2) {
-                $self->layers->[-2]->set_upper_layer($self->layers->[-1]);
-                $self->layers->[-1]->set_lower_layer($self->layers->[-2]);
+            if ($self->layer_count >= 2) {
+                my $lc = $self->layer_count;
+                $self->get_layer($lc - 2)->set_upper_layer($self->get_layer($lc - 1));
+                $self->get_layer($lc - 1)->set_lower_layer($self->get_layer($lc - 2));
             }
             $id++;
         
@@ -181,7 +185,7 @@ sub slice {
     for my $region_id (0..($self->region_count - 1)) {
         my $expolygons_by_layer = $self->_slice_region($region_id, \@z, 0);
         for my $layer_id (0..$#$expolygons_by_layer) {
-            my $layerm = $self->layers->[$layer_id]->regions->[$region_id];
+            my $layerm = $self->get_layer($layer_id)->regions->[$region_id];
             $layerm->slices->clear;
             foreach my $expolygon (@{ $expolygons_by_layer->[$layer_id] }) {
                 $layerm->slices->append(Slic3r::Surface->new(
@@ -202,8 +206,8 @@ sub slice {
                 next if $other_region_id == $region_id;
                 
                 for my $layer_id (0..$#$expolygons_by_layer) {
-                    my $layerm = $self->layers->[$layer_id]->regions->[$region_id];
-                    my $other_layerm = $self->layers->[$layer_id]->regions->[$other_region_id];
+                    my $layerm = $self->get_layer($layer_id)->regions->[$region_id];
+                    my $other_layerm = $self->get_layer($layer_id)->regions->[$other_region_id];
                     
                     my $other_slices = [ map $_->p, @{$other_layerm->slices} ];  # Polygons
                     my $my_parts = intersection_ex(
@@ -233,7 +237,7 @@ sub slice {
     
     # remove last layer(s) if empty
     $self->delete_layer($self->layer_count - 1)
-        while $self->layer_count && (!map @{$_->slices}, @{$self->layers->[-1]->regions});
+        while $self->layer_count && (!map @{$_->slices}, @{$self->get_layer($self->layer_count - 1)->regions});
     
     foreach my $layer (@{ $self->layers }) {
         # apply size compensation
@@ -296,7 +300,7 @@ sub slice {
     # detect slicing errors
     my $warning_thrown = 0;
     for my $i (0 .. ($self->layer_count - 1)) {
-        my $layer = $self->layers->[$i];
+        my $layer = $self->get_layer($i);
         next unless $layer->slicing_errors;
         if (!$warning_thrown) {
             warn "The model has overlapping or self-intersecting facets. I tried to repair it, "
@@ -313,14 +317,14 @@ sub slice {
             
             my (@upper_surfaces, @lower_surfaces);
             for (my $j = $i+1; $j < $self->layer_count; $j++) {
-                if (!$self->layers->[$j]->slicing_errors) {
-                    @upper_surfaces = @{$self->layers->[$j]->region($region_id)->slices};
+                if (!$self->get_layer($j)->slicing_errors) {
+                    @upper_surfaces = @{$self->get_layer($j)->region($region_id)->slices};
                     last;
                 }
             }
             for (my $j = $i-1; $j >= 0; $j--) {
-                if (!$self->layers->[$j]->slicing_errors) {
-                    @lower_surfaces = @{$self->layers->[$j]->region($region_id)->slices};
+                if (!$self->get_layer($j)->slicing_errors) {
+                    @lower_surfaces = @{$self->get_layer($j)->region($region_id)->slices};
                     last;
                 }
             }
@@ -346,10 +350,10 @@ sub slice {
     }
     
     # remove empty layers from bottom
-    while (@{$self->layers} && !@{$self->layers->[0]->slices}) {
+    while (@{$self->layers} && !@{$self->get_layer(0)->slices}) {
         shift @{$self->layers};
         for (my $i = 0; $i <= $#{$self->layers}; $i++) {
-            $self->layers->[$i]->id( $self->layers->[$i]->id-1 );
+            $self->get_layer($i)->id( $self->get_layer($i)->id-1 );
         }
     }
     
@@ -357,6 +361,11 @@ sub slice {
     if ($self->print->config->resolution) {
         $self->_simplify_slices(scale($self->print->config->resolution));
     }
+    
+    die "No layers were detected. You might want to repair your STL file(s) or check their size and retry.\n"
+        if !@{$self->layers};
+    
+    $self->set_step_done(STEP_SLICE);
 }
 
 sub _slice_region {
@@ -394,6 +403,14 @@ sub _slice_region {
 sub make_perimeters {
     my $self = shift;
     
+    # prerequisites
+    $self->print->init_extruders;
+    $self->slice;
+    
+    return if $self->step_done(STEP_PERIMETERS);
+    $self->set_step_started(STEP_PERIMETERS);
+    $self->print->status_cb->(20, "Generating perimeters");
+    
     # compare each layer to the one below, and mark those slices needing
     # one additional inner perimeter, like the top of domed objects-
     
@@ -407,8 +424,8 @@ sub make_perimeters {
         
         if ($region->config->extra_perimeters && $region_perimeters > 0 && $region->config->fill_density > 0) {
             for my $i (0 .. ($self->layer_count - 2)) {
-                my $layerm          = $self->layers->[$i]->regions->[$region_id];
-                my $upper_layerm    = $self->layers->[$i+1]->regions->[$region_id];
+                my $layerm          = $self->get_layer($i)->regions->[$region_id];
+                my $upper_layerm    = $self->get_layer($i+1)->regions->[$region_id];
                 my $perimeter_spacing       = $layerm->flow(FLOW_ROLE_PERIMETER)->scaled_spacing;
                 my $ext_perimeter_spacing   = $layerm->flow(FLOW_ROLE_EXTERNAL_PERIMETER)->scaled_spacing;
                 
@@ -460,7 +477,7 @@ sub make_perimeters {
         thread_cb => sub {
             my $q = shift;
             while (defined (my $i = $q->dequeue)) {
-                $self->layers->[$i]->make_perimeters;
+                $self->get_layer($i)->make_perimeters;
             }
         },
         collect_cb => sub {},
@@ -473,6 +490,127 @@ sub make_perimeters {
     # we only need the max resolution for perimeters
     ### This makes this method not-idempotent, so we keep it disabled for now.
     ###$self->_simplify_slices(&Slic3r::SCALED_RESOLUTION);
+    
+    $self->set_step_done(STEP_PERIMETERS);
+}
+
+sub prepare_infill {
+    my ($self) = @_;
+    
+    # prerequisites
+    $self->make_perimeters;
+    
+    return if $self->step_done(STEP_PREPARE_INFILL);
+    $self->set_step_started(STEP_PREPARE_INFILL);
+    $self->print->status_cb->(30, "Preparing infill");
+    
+    # this will assign a type (top/bottom/internal) to $layerm->slices
+    # and transform $layerm->fill_surfaces from expolygon 
+    # to typed top/bottom/internal surfaces;
+    $self->detect_surfaces_type;
+
+    # decide what surfaces are to be filled
+    $_->prepare_fill_surfaces for map @{$_->regions}, @{$self->layers};
+
+    # this will detect bridges and reverse bridges
+    # and rearrange top/bottom/internal surfaces
+    $self->process_external_surfaces;
+
+    # detect which fill surfaces are near external layers
+    # they will be split in internal and internal-solid surfaces
+    $self->discover_horizontal_shells;
+    $self->clip_fill_surfaces;
+    
+    # the following step needs to be done before combination because it may need
+    # to remove only half of the combined infill
+    $self->bridge_over_infill;
+
+    # combine fill surfaces to honor the "infill every N layers" option
+    $self->combine_infill;
+    
+    $self->set_step_done(STEP_PREPARE_INFILL);
+}
+
+sub infill {
+    my ($self) = @_;
+    
+    # prerequisites
+    $self->prepare_infill;
+    
+    return if $self->step_done(STEP_INFILL);
+    $self->set_step_started(STEP_INFILL);
+    $self->print->status_cb->(70, "Infilling layers");
+    
+    Slic3r::parallelize(
+        threads => $self->print->config->threads,
+        items => sub {
+            my @items = ();  # [layer_id, region_id]
+            for my $region_id (0 .. ($self->print->regions_count-1)) {
+                push @items, map [$_, $region_id], 0..($self->layer_count - 1);
+            }
+            @items;
+        },
+        thread_cb => sub {
+            my $q = shift;
+            while (defined (my $obj_layer = $q->dequeue)) {
+                my ($i, $region_id) = @$obj_layer;
+                my $layerm = $self->get_layer($i)->regions->[$region_id];
+                $layerm->fills->clear;
+                $layerm->fills->append( $self->fill_maker->make_fill($layerm) );
+            }
+        },
+        collect_cb => sub {},
+        no_threads_cb => sub {
+            foreach my $layerm (map @{$_->regions}, @{$self->layers}) {
+                $layerm->fills->clear;
+                $layerm->fills->append($self->fill_maker->make_fill($layerm));
+            }
+        },
+    );
+
+    ### we could free memory now, but this would make this step not idempotent
+    ### $_->fill_surfaces->clear for map @{$_->regions}, @{$object->layers};
+    
+    $self->set_step_done(STEP_INFILL);
+}
+
+sub generate_support_material {
+    my $self = shift;
+    
+    # prerequisites
+    $self->print->init_extruders;
+    $self->slice;
+    
+    return if $self->step_done(STEP_SUPPORTMATERIAL);
+    $self->set_step_started(STEP_SUPPORTMATERIAL);
+    
+    $self->clear_support_layers;
+    
+    if ((!$self->config->support_material && $self->config->raft_layers == 0) || scalar(@{$self->layers}) < 2) {
+        $self->set_step_done(STEP_SUPPORTMATERIAL);
+        return;
+    }
+    $self->print->status_cb->(85, "Generating support material");
+    
+    my $first_layer_flow = Slic3r::Flow->new_from_width(
+        width               => ($self->config->first_layer_extrusion_width || $self->config->support_material_extrusion_width),
+        role                => FLOW_ROLE_SUPPORT_MATERIAL,
+        nozzle_diameter     => $self->print->config->nozzle_diameter->[ $self->config->support_material_extruder-1 ]
+                                // $self->print->config->nozzle_diameter->[0],
+        layer_height        => $self->config->get_abs_value('first_layer_height'),
+        bridge_flow_ratio   => 0,
+    );
+    
+    my $s = Slic3r::Print::SupportMaterial->new(
+        print_config        => $self->print->config,
+        object_config       => $self->config,
+        first_layer_flow    => $first_layer_flow,
+        flow                => $self->support_material_flow,
+        interface_flow      => $self->support_material_flow(FLOW_ROLE_SUPPORT_MATERIAL_INTERFACE),
+    );
+    $s->generate($self);
+    
+    $self->set_step_done(STEP_SUPPORTMATERIAL);
 }
 
 sub detect_surfaces_type {
@@ -481,7 +619,7 @@ sub detect_surfaces_type {
     
     for my $region_id (0 .. ($self->print->regions_count-1)) {
         for my $i (0 .. ($self->layer_count - 1)) {
-            my $layerm = $self->layers->[$i]->regions->[$region_id];
+            my $layerm = $self->get_layer($i)->regions->[$region_id];
         
             # prepare a reusable subroutine to make surface differences
             my $difference = sub {
@@ -499,8 +637,8 @@ sub detect_surfaces_type {
             
             # comparison happens against the *full* slices (considering all regions)
             # unless internal shells are requested
-            my $upper_layer = $self->layers->[$i+1];
-            my $lower_layer = $i > 0 ? $self->layers->[$i-1] : undef;
+            my $upper_layer = $i < $self->layer_count - 1 ? $self->get_layer($i+1) : undef;
+            my $lower_layer = $i > 0 ? $self->get_layer($i-1) : undef;
             
             # find top surfaces (difference between current surfaces
             # of current layer and upper one)
@@ -613,7 +751,7 @@ sub clip_fill_surfaces {
     
     my $overhangs = [];  # arrayref of polygons
     for my $layer_id (reverse 0..($self->layer_count - 1)) {
-        my $layer = $self->layers->[$layer_id];
+        my $layer = $self->get_layer($layer_id);
         my @layer_internal = ();  # arrayref of Surface objects
         my @new_internal = ();    # arrayref of Surface objects
         
@@ -666,9 +804,9 @@ sub bridge_over_infill {
         next if $fill_density == 100 || $fill_density == 0;
         
         for my $layer_id (1..($self->layer_count - 1)) {
-            my $layer       = $self->layers->[$layer_id];
+            my $layer       = $self->get_layer($layer_id);
             my $layerm      = $layer->regions->[$region_id];
-            my $lower_layer = $self->layers->[$layer_id-1];
+            my $lower_layer = $self->get_layer($layer_id-1);
             
             # compute the areas needing bridge math 
             my @internal_solid = @{$layerm->fill_surfaces->filter_by_type(S_TYPE_INTERNALSOLID)};
@@ -704,9 +842,9 @@ sub bridge_over_infill {
             # Update: do not exclude any infill. Sparse infill is able to absorb the excess material.
             if (0) {
                 my $excess = $layerm->extruders->{infill}->bridge_flow->width - $layerm->height;
-                for (my $i = $layer_id-1; $excess >= $self->layers->[$i]->height; $i--) {
+                for (my $i = $layer_id-1; $excess >= $self->get_layer($i)->height; $i--) {
                     Slic3r::debugf "  skipping infill below those areas at layer %d\n", $i;
-                    foreach my $lower_layerm (@{$self->layers->[$i]->regions}) {
+                    foreach my $lower_layerm (@{$self->get_layer($i)->regions}) {
                         my @new_surfaces = ();
                         # subtract the area from all types of surfaces
                         foreach my $group (@{$lower_layerm->fill_surfaces->group}) {
@@ -727,7 +865,7 @@ sub bridge_over_infill {
                         $lower_layerm->fill_surfaces->append(@new_surfaces);
                     }
                     
-                    $excess -= $self->layers->[$i]->height;
+                    $excess -= $self->get_layer($i)->height;
                 }
             }
         }
@@ -738,9 +876,9 @@ sub process_external_surfaces {
     my ($self) = @_;
     
     for my $region_id (0 .. ($self->print->regions_count-1)) {
-        $self->layers->[0]->regions->[$region_id]->process_external_surfaces(undef);
+        $self->get_layer(0)->regions->[$region_id]->process_external_surfaces(undef);
         for my $i (1 .. ($self->layer_count - 1)) {
-            $self->layers->[$i]->regions->[$region_id]->process_external_surfaces($self->layers->[$i-1]);
+            $self->get_layer($i)->regions->[$region_id]->process_external_surfaces($self->get_layer($i-1));
         }
     }
 }
@@ -752,7 +890,7 @@ sub discover_horizontal_shells {
     
     for my $region_id (0 .. ($self->print->regions_count-1)) {
         for (my $i = 0; $i < $self->layer_count; $i++) {
-            my $layerm = $self->layers->[$i]->regions->[$region_id];
+            my $layerm = $self->get_layer($i)->regions->[$region_id];
             
             if ($layerm->config->solid_infill_every_layers && $layerm->config->fill_density > 0
                 && ($i % $layerm->config->solid_infill_every_layers) == 0) {
@@ -786,7 +924,7 @@ sub discover_horizontal_shells {
                     next if $n < 0 || $n >= $self->layer_count;
                     Slic3r::debugf "  looking for neighbors on layer %d...\n", $n;
                     
-                    my $neighbor_layerm = $self->layers->[$n]->regions->[$region_id];
+                    my $neighbor_layerm = $self->get_layer($n)->regions->[$region_id];
                     my $neighbor_fill_surfaces = $neighbor_layerm->fill_surfaces;
                     my @neighbor_fill_surfaces = map $_->clone, @$neighbor_fill_surfaces;  # clone because we will use these surfaces even after clearing the collection
                     
@@ -912,7 +1050,7 @@ sub combine_infill {
         {
             my $current_height = my $layers = 0;
             for my $layer_id (1 .. $#layer_heights) {
-                my $height = $self->layers->[$layer_id]->height;
+                my $height = $self->get_layer($layer_id)->height;
                 
                 if ($current_height + $height >= $nozzle_diameter || $layers >= $every) {
                     $combine[$layer_id-1] = $layers;
@@ -927,7 +1065,7 @@ sub combine_infill {
         # skip bottom layer
         for my $layer_id (1 .. $#combine) {
             next unless ($combine[$layer_id] // 1) > 1;
-            my @layerms = map $self->layers->[$_]->regions->[$region_id],
+            my @layerms = map $self->get_layer($_)->regions->[$region_id],
                 ($layer_id - ($combine[$layer_id]-1) .. $layer_id);
             
             # only combine internal infill
@@ -1003,33 +1141,6 @@ sub combine_infill {
             }
         }
     }
-}
-
-sub generate_support_material {
-    my $self = shift;
-    
-    $self->clear_support_layers;
-    
-    return unless ($self->config->support_material || $self->config->raft_layers > 0)
-        && scalar(@{$self->layers}) >= 2;
-    
-    my $first_layer_flow = Slic3r::Flow->new_from_width(
-        width               => ($self->config->first_layer_extrusion_width || $self->config->support_material_extrusion_width),
-        role                => FLOW_ROLE_SUPPORT_MATERIAL,
-        nozzle_diameter     => $self->print->config->nozzle_diameter->[ $self->config->support_material_extruder-1 ]
-                                // $self->print->config->nozzle_diameter->[0],
-        layer_height        => $self->config->get_abs_value('first_layer_height'),
-        bridge_flow_ratio   => 0,
-    );
-    
-    my $s = Slic3r::Print::SupportMaterial->new(
-        print_config        => $self->print->config,
-        object_config       => $self->config,
-        first_layer_flow    => $first_layer_flow,
-        flow                => $self->support_material_flow,
-        interface_flow      => $self->support_material_flow(FLOW_ROLE_SUPPORT_MATERIAL_INTERFACE),
-    );
-    $s->generate($self);
 }
 
 sub _simplify_slices {

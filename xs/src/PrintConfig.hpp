@@ -307,7 +307,7 @@ class PrintConfig : public virtual StaticPrintConfig
 {
     public:
     ConfigOptionBool                avoid_crossing_perimeters;
-    ConfigOptionPoint               bed_size;
+    ConfigOptionPoints              bed_shape;
     ConfigOptionInt                 bed_temperature;
     ConfigOptionFloat               bridge_acceleration;
     ConfigOptionInt                 bridge_fan_speed;
@@ -349,7 +349,6 @@ class PrintConfig : public virtual StaticPrintConfig
     ConfigOptionString              output_filename_format;
     ConfigOptionFloat               perimeter_acceleration;
     ConfigOptionStrings             post_process;
-    ConfigOptionPoint               print_center;
     ConfigOptionFloat               resolution;
     ConfigOptionFloats              retract_before_travel;
     ConfigOptionBools               retract_layer_change;
@@ -380,7 +379,10 @@ class PrintConfig : public virtual StaticPrintConfig
     
     PrintConfig() : StaticPrintConfig() {
         this->avoid_crossing_perimeters.value                    = false;
-        this->bed_size.point                                     = Pointf(200,200);
+        this->bed_shape.values.push_back(Pointf(0,0));
+        this->bed_shape.values.push_back(Pointf(200,0));
+        this->bed_shape.values.push_back(Pointf(200,200));
+        this->bed_shape.values.push_back(Pointf(0,200));
         this->bed_temperature.value                              = 0;
         this->bridge_acceleration.value                          = 0;
         this->bridge_fan_speed.value                             = 100;
@@ -428,7 +430,6 @@ class PrintConfig : public virtual StaticPrintConfig
         this->ooze_prevention.value                              = false;
         this->output_filename_format.value                       = "[input_filename_base].gcode";
         this->perimeter_acceleration.value                       = 0;
-        this->print_center.point                                 = Pointf(100,100);
         this->resolution.value                                   = 0;
         this->retract_before_travel.values.resize(1);
         this->retract_before_travel.values[0]                    = 2;
@@ -472,7 +473,7 @@ class PrintConfig : public virtual StaticPrintConfig
     
     ConfigOption* option(const t_config_option_key opt_key, bool create = false) {
         if (opt_key == "avoid_crossing_perimeters")                  return &this->avoid_crossing_perimeters;
-        if (opt_key == "bed_size")                                   return &this->bed_size;
+        if (opt_key == "bed_shape")                                  return &this->bed_shape;
         if (opt_key == "bed_temperature")                            return &this->bed_temperature;
         if (opt_key == "bridge_acceleration")                        return &this->bridge_acceleration;
         if (opt_key == "bridge_fan_speed")                           return &this->bridge_fan_speed;
@@ -514,7 +515,6 @@ class PrintConfig : public virtual StaticPrintConfig
         if (opt_key == "output_filename_format")                     return &this->output_filename_format;
         if (opt_key == "perimeter_acceleration")                     return &this->perimeter_acceleration;
         if (opt_key == "post_process")                               return &this->post_process;
-        if (opt_key == "print_center")                               return &this->print_center;
         if (opt_key == "resolution")                                 return &this->resolution;
         if (opt_key == "retract_before_travel")                      return &this->retract_before_travel;
         if (opt_key == "retract_layer_change")                       return &this->retract_layer_change;

@@ -5,48 +5,39 @@ namespace Slic3r {
 
 template <class StepClass>
 bool
-PrintState<StepClass>::started(StepClass step) const
+PrintState<StepClass>::is_started(StepClass step) const
 {
-    return this->_started.find(step) != this->_started.end();
+    return this->started.find(step) != this->started.end();
 }
 
 template <class StepClass>
 bool
-PrintState<StepClass>::done(StepClass step) const
+PrintState<StepClass>::is_done(StepClass step) const
 {
-    return this->_done.find(step) != this->_done.end();
+    return this->done.find(step) != this->done.end();
 }
 
 template <class StepClass>
 void
 PrintState<StepClass>::set_started(StepClass step)
 {
-    this->_started.insert(step);
+    this->started.insert(step);
 }
 
 template <class StepClass>
 void
 PrintState<StepClass>::set_done(StepClass step)
 {
-    this->_done.insert(step);
-}
-
-template <class StepClass>
-void
-PrintState<StepClass>::invalidate(StepClass step)
-{
-    this->_started.erase(step);
-    this->_done.erase(step);
+    this->done.insert(step);
 }
 
 template <class StepClass>
 bool
-PrintState<StepClass>::invalidate_all()
+PrintState<StepClass>::invalidate(StepClass step)
 {
-    bool empty = this->_started.empty();
-    this->_started.clear();
-    this->_done.clear();
-    return !empty;  // return true if we invalidated something
+    bool invalidated = this->started.erase(step) > 0;
+    this->done.erase(step);
+    return invalidated;
 }
 
 template class PrintState<PrintStep>;
@@ -255,22 +246,34 @@ PrintObject::invalidate_state_by_config_options(const std::vector<t_config_optio
         } else if (*opt_key == "bridge_flow_ratio") {
             steps.insert(posPerimeters);
             steps.insert(posInfill);
+        } else if (*opt_key == "seam_position"
+            || *opt_key == "support_material_speed"
+            || *opt_key == "bridge_speed"
+            || *opt_key == "external_perimeter_speed"
+            || *opt_key == "infill_speed"
+            || *opt_key == "perimeter_speed"
+            || *opt_key == "small_perimeter_speed"
+            || *opt_key == "solid_infill_speed"
+            || *opt_key == "top_solid_infill_speed") {
+            // these options only affect G-code export, so nothing to invalidate
         } else {
-            // for legacy, if we can't handle this option let's signal the caller to invalidate all steps
-            return false;
+            // for legacy, if we can't handle this option let's invalidate all steps
+            return this->invalidate_all_steps();
         }
     }
     
-    for (std::set<PrintObjectStep>::const_iterator step = steps.begin(); step != steps.end(); ++step)
-        this->invalidate_step(*step);
+    bool invalidated = false;
+    for (std::set<PrintObjectStep>::const_iterator step = steps.begin(); step != steps.end(); ++step) {
+        if (this->invalidate_step(*step)) invalidated = true;
+    }
     
-    return true;
+    return invalidated;
 }
 
-void
+bool
 PrintObject::invalidate_step(PrintObjectStep step)
 {
-    this->state.invalidate(step);
+    bool invalidated = this->state.invalidate(step);
     
     // propagate to dependent steps
     if (step == posPerimeters) {
@@ -286,6 +289,21 @@ PrintObject::invalidate_step(PrintObjectStep step)
         this->invalidate_step(posPerimeters);
         this->invalidate_step(posSupportMaterial);
     }
+    
+    return invalidated;
+}
+
+bool
+PrintObject::invalidate_all_steps()
+{
+    // make a copy because when invalidating steps the iterators are not working anymore
+    std::set<PrintObjectStep> steps = this->state.started;
+    
+    bool invalidated = false;
+    for (std::set<PrintObjectStep>::const_iterator step = steps.begin(); step != steps.end(); ++step) {
+        if (this->invalidate_step(*step)) invalidated = true;
+    }
+    return invalidated;
 }
 
 
@@ -313,9 +331,6 @@ Print::clear_objects()
         this->delete_object(i);
 
     this->clear_regions();
-
-    this->state.invalidate(psSkirt);
-    this->state.invalidate(psBrim);
 }
 
 PrintObject*
@@ -325,11 +340,15 @@ Print::get_object(size_t idx)
 }
 
 PrintObject*
-Print::add_object(ModelObject *model_object,
-        const BoundingBoxf3 &modobj_bbox)
+Print::add_object(ModelObject *model_object, const BoundingBoxf3 &modobj_bbox)
 {
     PrintObject *object = new PrintObject(this, model_object, modobj_bbox);
     objects.push_back(object);
+    
+    // invalidate steps
+    this->invalidate_step(psSkirt);
+    this->invalidate_step(psBrim);
+    
     return object;
 }
 
@@ -339,6 +358,9 @@ Print::set_new_object(size_t idx, ModelObject *model_object, const BoundingBoxf3
     if (idx >= this->objects.size()) throw "bad idx";
 
     PrintObjectPtrs::iterator old_it = this->objects.begin() + idx;
+    // before deleting object, invalidate all of its steps in order to 
+    // invalidate all of the dependent ones in Print
+    (*old_it)->invalidate_all_steps();
     delete *old_it;
 
     PrintObject *object = new PrintObject(this, model_object, modobj_bbox);
@@ -402,22 +424,86 @@ Print::invalidate_state_by_config_options(const std::vector<t_config_option_key>
             steps.insert(psSkirt);
         } else if (*opt_key == "brim_width") {
             steps.insert(psBrim);
+        } else if (*opt_key == "nozzle_diameter") {
+            steps.insert(psInitExtruders);
+        } else if (*opt_key == "avoid_crossing_perimeters"
+            || *opt_key == "bed_shape"
+            || *opt_key == "bed_temperature"
+            || *opt_key == "bridge_acceleration"
+            || *opt_key == "bridge_fan_speed"
+            || *opt_key == "complete_objects"
+            || *opt_key == "cooling"
+            || *opt_key == "default_acceleration"
+            || *opt_key == "disable_fan_first_layers"
+            || *opt_key == "duplicate_distance"
+            || *opt_key == "end_gcode"
+            || *opt_key == "extruder_clearance_height"
+            || *opt_key == "extruder_clearance_radius"
+            || *opt_key == "extruder_offset"
+            || *opt_key == "extrusion_axis"
+            || *opt_key == "extrusion_multiplier"
+            || *opt_key == "fan_always_on"
+            || *opt_key == "fan_below_layer_time"
+            || *opt_key == "filament_diameter"
+            || *opt_key == "first_layer_acceleration"
+            || *opt_key == "first_layer_bed_temperature"
+            || *opt_key == "first_layer_speed"
+            || *opt_key == "first_layer_temperature"
+            || *opt_key == "g0"
+            || *opt_key == "gcode_arcs"
+            || *opt_key == "gcode_comments"
+            || *opt_key == "gcode_flavor"
+            || *opt_key == "infill_acceleration"
+            || *opt_key == "infill_first"
+            || *opt_key == "layer_gcode"
+            || *opt_key == "min_fan_speed"
+            || *opt_key == "max_fan_speed"
+            || *opt_key == "min_print_speed"
+            || *opt_key == "notes"
+            || *opt_key == "only_retract_when_crossing_perimeters"
+            || *opt_key == "output_filename_format"
+            || *opt_key == "perimeter_acceleration"
+            || *opt_key == "post_process"
+            || *opt_key == "retract_before_travel"
+            || *opt_key == "retract_layer_change"
+            || *opt_key == "retract_length"
+            || *opt_key == "retract_length_toolchange"
+            || *opt_key == "retract_lift"
+            || *opt_key == "retract_restart_extra"
+            || *opt_key == "retract_restart_extra_toolchange"
+            || *opt_key == "retract_speed"
+            || *opt_key == "slowdown_below_layer_time"
+            || *opt_key == "spiral_vase"
+            || *opt_key == "standby_temperature_delta"
+            || *opt_key == "start_gcode"
+            || *opt_key == "temperature"
+            || *opt_key == "threads"
+            || *opt_key == "toolchange_gcode"
+            || *opt_key == "travel_speed"
+            || *opt_key == "use_firmware_retraction"
+            || *opt_key == "use_relative_e_distances"
+            || *opt_key == "vibration_limit"
+            || *opt_key == "wipe"
+            || *opt_key == "z_offset") {
+            // these options only affect G-code export, so nothing to invalidate
         } else {
-            // for legacy, if we can't handle this option let's signal the caller to invalidate all steps
-            return false;
+            // for legacy, if we can't handle this option let's invalidate all steps
+            return this->invalidate_all_steps();
         }
     }
     
-    for (std::set<PrintStep>::const_iterator step = steps.begin(); step != steps.end(); ++step)
-        this->invalidate_step(*step);
+    bool invalidated = false;
+    for (std::set<PrintStep>::const_iterator step = steps.begin(); step != steps.end(); ++step) {
+        if (this->invalidate_step(*step)) invalidated = true;
+    }
     
-    return true;
+    return invalidated;
 }
 
-void
+bool
 Print::invalidate_step(PrintStep step)
 {
-    this->state.invalidate(step);
+    bool invalidated = this->state.invalidate(step);
     
     // propagate to dependent steps
     if (step == psSkirt) {
@@ -428,6 +514,21 @@ Print::invalidate_step(PrintStep step)
             (*object)->invalidate_step(posSupportMaterial);
         }
     }
+    
+    return invalidated;
+}
+
+bool
+Print::invalidate_all_steps()
+{
+    // make a copy because when invalidating steps the iterators are not working anymore
+    std::set<PrintStep> steps = this->state.started;
+    
+    bool invalidated = false;
+    for (std::set<PrintStep>::const_iterator step = steps.begin(); step != steps.end(); ++step) {
+        if (this->invalidate_step(*step)) invalidated = true;
+    }
+    return invalidated;
 }
 
 
