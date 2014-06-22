@@ -12,7 +12,7 @@ has 'reader'          => (is => 'rw', default => sub { Slic3r::GCode::Reader->ne
 sub add_e {
     my ($line, $E, $comment) = @_;
 
-    # replaces only the E argument with the specified value
+    # replaces only the E argument, if present, with the specified value
     $line =~ s/\sE(\S*)\s/sprintf(" E%.5f ", $E)/ge;
     return $line . $comment . "\n";
 }
@@ -21,7 +21,7 @@ sub process_layer {
     my $self = shift;
     my ($gcode) = @_;
 
-    # variables to hold information during the loop
+    # aux variables to hold information during the loop
     my $new_gcode = "";
     my $adv = 0;
 
@@ -38,39 +38,44 @@ sub process_layer {
             my $v2 = $F/60;
 
             # aux variables
-            my $e_only = 0;
             my $dist_E = $info->{"dist_E"};
             my $comm = "";
+            my $retract_amnt = 0;
 
-            # Check if we have a extruder movement only (retract/unretract)
+            # Check if we have an extruder movement only (retract/unretract)
             if ((exists $args->{E}) && (!(exists $args->{X} || exists $args->{Y} || exists $args->{Z}))) {
-                $e_only = 1;
-            }
-
-            # verify speed change
-            if (($v1 != $v2) && ($e_only == 0) && (exists $args->{E})) {
-
-                # workaround #2033
-                if ($self->relative) {
-                    $dist_E = $info->{"new_E"};
+                if ($dist_E > 0) {
+                    #unretract
+                    $retract_amnt = $self->amnt;
+                } else {
+                    #retract
+                    $retract_amnt = -$self->amnt;
                 }
+            } else {
+                # verify speed change (excludes movements)
+                if (($v1 != $v2) && (exists $args->{E})) {
 
-                # E_per_mm
-                my $e = $dist_E / $info->{dist_XY};
+                    # workaround bug #2033
+                    if ($self->relative) {
+                        $dist_E = $info->{"new_E"};
+                    }
 
-                # Advance algorithm
-                my $last_amnt = $self->amnt;
-                $self->amnt($e * $v2**2 * ($self->pressure/10000));
-                $adv = $self->amnt - $last_amnt; 
-                $comm = " + pressure advance";
-                $self->last_F($F);
+                    # E_per_mm
+                    my $e = $dist_E / $info->{dist_XY};
+
+                    # Advance algorithm
+                    my $last_amnt = $self->amnt;
+                    $self->amnt($e * $v2**2 * ($self->pressure/10000));
+                    $adv = $self->amnt - $last_amnt; 
+                    $comm = " + pressure advance";
+                    $self->last_F($F);
+                }
             }
 
             # insert the gcode line, summing up the advance amount
-            # when using absolute E, we need to filter out unretracts
             $new_gcode .= add_e(
                 $info->{raw}, 
-                ($info->{"new_E"} // 0) + ((($e_only == 1) && ($dist_E > 0)) ? 0 : $adv),
+                ($info->{"new_E"} // 0) + $adv + $retract_amnt,
                 $info->{comment} ? $comm : "" );
 
             # only insert the first comment and the first line in case of relative distances
