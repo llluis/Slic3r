@@ -390,6 +390,20 @@ sub raw_mesh {
     return $mesh;
 }
 
+sub raw_bounding_box {
+    my $self = shift;
+    
+    my @meshes = map $_->mesh->clone, grep !$_->modifier, @{ $self->volumes };
+    die "No meshes found" if !@meshes;
+    
+    my $instance = $self->instances->[0];
+    $instance->transform_mesh($_, 1) for @meshes;
+    
+    my $bb = (shift @meshes)->bounding_box;
+    $bb->merge($_->bounding_box) for @meshes;
+    return $bb;
+}
+
 # flattens all volumes and instances into a single mesh
 sub mesh {
     my $self = shift;

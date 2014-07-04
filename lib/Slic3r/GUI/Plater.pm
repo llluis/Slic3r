@@ -149,10 +149,13 @@ sub new {
     });
     
     # right pane buttons
-    $self->{btn_export_gcode} = Wx::Button->new($self, -1, "Export G-code…", wxDefaultPosition, wxDefaultSize, wxBU_LEFT);
-    $self->{btn_export_stl} = Wx::Button->new($self, -1, "Export STL…", wxDefaultPosition, wxDefaultSize, wxBU_LEFT);
+    $self->{btn_export_gcode} = Wx::Button->new($self, -1, "Export G-code…", wxDefaultPosition, [-1, 30], wxBU_LEFT);
+    $self->{btn_export_stl} = Wx::Button->new($self, -1, "Export STL…", wxDefaultPosition, [-1, 30], wxBU_LEFT);
+    $self->{btn_toolpaths_preview} = Wx::Button->new($self, -1, "Toolpaths preview…", wxDefaultPosition, [-1, 30], wxBU_LEFT);
     $self->{btn_export_gcode}->SetFont($Slic3r::GUI::small_font);
     $self->{btn_export_stl}->SetFont($Slic3r::GUI::small_font);
+    $self->{btn_toolpaths_preview}->SetFont($Slic3r::GUI::small_font);
+    $self->{btn_toolpaths_preview}->Disable;
     
     if ($Slic3r::GUI::have_button_icons) {
         my %icons = qw(
@@ -162,6 +165,7 @@ sub new {
             arrange         bricks.png
             export_gcode    cog_go.png
             export_stl      brick_go.png
+            toolpaths_preview joystick.png
             
             increase        add.png
             decrease        delete.png
@@ -183,6 +187,7 @@ sub new {
         Slic3r::thread_cleanup();
     });
     EVT_BUTTON($self, $self->{btn_export_stl}, \&export_stl);
+    EVT_BUTTON($self, $self->{btn_toolpaths_preview}, \&toolpaths_preview);
     
     if ($self->{htoolbar}) {
         EVT_TOOL($self, TB_ADD, sub { $self->add; });
@@ -270,7 +275,7 @@ sub new {
                 my $choice = Wx::Choice->new($self, -1, wxDefaultPosition, [140, -1], []);
                 $choice->SetFont($Slic3r::GUI::small_font);
                 $self->{preset_choosers}{$group} = [$choice];
-                EVT_CHOICE($choice, $choice, sub { $self->on_select_preset($group, @_) });
+                EVT_CHOICE($choice, $choice, sub { $self->_on_select_preset($group, @_) });
                 
                 $self->{preset_choosers_sizers}{$group} = Wx::BoxSizer->new(wxVERTICAL);
                 $self->{preset_choosers_sizers}{$group}->Add($choice, 0, wxEXPAND | wxBOTTOM, FILAMENT_CHOOSERS_SPACING);
@@ -300,14 +305,14 @@ sub new {
             );
             while (my $field = shift @info) {
                 my $label = shift @info;
-                my $text = Wx::StaticText->new($box, -1, "$label:", wxDefaultPosition, wxDefaultSize, wxALIGN_LEFT);
+                my $text = Wx::StaticText->new($self, -1, "$label:", wxDefaultPosition, wxDefaultSize, wxALIGN_LEFT);
                 $text->SetFont($Slic3r::GUI::small_font);
                 $grid_sizer->Add($text, 0);
                 
-                $self->{"object_info_$field"} = Wx::StaticText->new($box, -1, "", wxDefaultPosition, wxDefaultSize, wxALIGN_LEFT);
+                $self->{"object_info_$field"} = Wx::StaticText->new($self, -1, "", wxDefaultPosition, wxDefaultSize, wxALIGN_LEFT);
                 $self->{"object_info_$field"}->SetFont($Slic3r::GUI::small_font);
                 if ($field eq 'manifold') {
-                    $self->{object_info_manifold_warning_icon} = Wx::StaticBitmap->new($box, -1, Wx::Bitmap->new("$Slic3r::var/error.png", wxBITMAP_TYPE_PNG));
+                    $self->{object_info_manifold_warning_icon} = Wx::StaticBitmap->new($self, -1, Wx::Bitmap->new("$Slic3r::var/error.png", wxBITMAP_TYPE_PNG));
                     $self->{object_info_manifold_warning_icon}->Hide;
                     
                     my $h_sizer = Wx::BoxSizer->new(wxHORIZONTAL);
@@ -323,6 +328,7 @@ sub new {
         my $right_buttons_sizer = Wx::BoxSizer->new(wxVERTICAL);
         $right_buttons_sizer->Add($presets, 0, wxEXPAND, 0) if defined $presets;
         $right_buttons_sizer->Add($self->{btn_export_gcode}, 0, wxEXPAND | wxTOP, 8);
+        $right_buttons_sizer->Add($self->{btn_toolpaths_preview}, 0, wxEXPAND | wxTOP, 2);
         $right_buttons_sizer->Add($self->{btn_export_stl}, 0, wxEXPAND | wxTOP, 2);
         
         my $right_top_sizer = Wx::BoxSizer->new(wxHORIZONTAL);
@@ -345,13 +351,21 @@ sub new {
         $sizer->SetSizeHints($self);
         $self->SetSizer($sizer);
     }
+    
     return $self;
 }
 
+# sets the callback
 sub on_select_preset {
+    my ($self, $cb) = @_;
+    $self->{on_select_preset} = $cb;
+}
+
+sub _on_select_preset {
 	my $self = shift;
 	my ($group, $choice) = @_;
 	
+	# if user changed filament preset, don't propagate this to the tabs
 	if ($group eq 'filament' && @{$self->{preset_choosers}{filament}} > 1) {
 		my @filament_presets = $self->filament_presets;
 		$Slic3r::GUI::Settings->{presets}{filament} = $choice->GetString($filament_presets[0]) . ".ini";
@@ -360,7 +374,11 @@ sub on_select_preset {
 		wxTheApp->save_settings;
 		return;
 	}
-	$self->GetFrame->{options_tabs}{$group}->select_preset($choice->GetSelection);
+	$self->{on_select_preset}->($group, $choice->GetSelection)
+	    if $self->{on_select_preset};
+	
+	# get new config and generate on_config_change() event for updating plater and other things
+	$self->on_config_change($self->GetFrame->config);
 }
 
 sub GetFrame {
@@ -590,28 +608,28 @@ sub rotate {
         $angle = 0 - $angle;  # rotate clockwise (be consistent with button icon)
     }
     
-    {
-        if ($axis == Z) {
-            my $new_angle = $model_instance->rotation + $angle;
-            $_->set_rotation($new_angle) for @{ $model_object->instances };
-            $object->transform_thumbnail($self->{model}, $obj_idx);
-        } else {
-            # rotation around X and Y needs to be performed on mesh
-            # so we first apply any Z rotation
-            if ($model_instance->rotation != 0) {
-                $model_object->rotate(deg2rad($model_instance->rotation), Z);
-                $_->set_rotation(0) for @{ $model_object->instances };
-            }
-            $model_object->rotate(deg2rad($angle), $axis);
-            $self->make_thumbnail($obj_idx);
+    $self->stop_background_process;
+    
+    if ($axis == Z) {
+        my $new_angle = $model_instance->rotation + $angle;
+        $_->set_rotation($new_angle) for @{ $model_object->instances };
+        $object->transform_thumbnail($self->{model}, $obj_idx);
+    } else {
+        # rotation around X and Y needs to be performed on mesh
+        # so we first apply any Z rotation
+        if ($model_instance->rotation != 0) {
+            $model_object->rotate(deg2rad($model_instance->rotation), Z);
+            $_->set_rotation(0) for @{ $model_object->instances };
         }
-        $model_object->update_bounding_box;
-        
-        # update print and start background processing
-        $self->stop_background_process;
-        $self->{print}->add_model_object($model_object, $obj_idx);
-        $self->schedule_background_process;
+        $model_object->rotate(deg2rad($angle), $axis);
+        $self->make_thumbnail($obj_idx);
     }
+    
+    $model_object->update_bounding_box;
+    # update print and start background processing
+    $self->{print}->add_model_object($model_object, $obj_idx);
+    $self->schedule_background_process;
+    
     $self->selection_changed;  # refresh info (size etc.)
     $self->update;
     $self->{canvas}->Refresh;
@@ -780,8 +798,11 @@ sub split_object {
 
 sub schedule_background_process {
     my ($self) = @_;
-    $self->{apply_config_timer}->Start(PROCESS_DELAY, 1)  # 1 = one shot
-        if defined $self->{apply_config_timer};
+    
+    if (defined $self->{apply_config_timer}) {
+        $self->{apply_config_timer}->Start(PROCESS_DELAY, 1);  # 1 = one shot
+        $self->{btn_toolpaths_preview}->Disable;
+    }
 }
 
 sub async_apply_config {
@@ -799,8 +820,9 @@ sub async_apply_config {
     if ($invalidated) {
         # kill current thread if any
         $self->stop_background_process;
+        $self->resume_background_process;
     } else {
-        # TODO: restore process thread
+        $self->resume_background_process;
     }
     
     # schedule a new process thread in case it wasn't running
@@ -809,8 +831,6 @@ sub async_apply_config {
 
 sub start_background_process {
     my ($self) = @_;
-    
-    $self->resume_background_process;
     
     return if !$Slic3r::have_threads;
     return if !@{$self->{objects}};
@@ -836,7 +856,7 @@ sub start_background_process {
     
     # start thread
     @_ = ();
-    $self->{process_thread} = threads->create(sub {
+    $self->{process_thread} = Slic3r::spawn_thread(sub {
         local $SIG{'KILL'} = sub {
             Slic3r::debugf "Background process cancelled; exiting thread...\n";
             Slic3r::thread_cleanup();
@@ -868,10 +888,11 @@ sub stop_background_process {
     $self->statusbar->SetCancelCallback(undef);
     $self->statusbar->StopBusy;
     $self->statusbar->SetStatusText("");
+    $self->{btn_toolpaths_preview}->Disable;
     
     if ($self->{process_thread}) {
         Slic3r::debugf "Killing background process.\n";
-        $self->{process_thread}->kill('KILL')->join;
+        Slic3r::kill_all_threads();
         $self->{process_thread} = undef;
     } else {
         Slic3r::debugf "No background process running.\n";
@@ -880,7 +901,7 @@ sub stop_background_process {
     # if there's an export process, kill that one as well
     if ($self->{export_thread}) {
         Slic3r::debugf "Killing background export process.\n";
-        $self->{export_thread}->kill('KILL')->join;
+        Slic3r::kill_all_threads();
         $self->{export_thread} = undef;
     }
 }
@@ -980,6 +1001,7 @@ sub on_process_completed {
     $self->{process_thread} = undef;
     
     return if !$result;
+    $self->{btn_toolpaths_preview}->Enable;
     
     # if we have an export filename, start a new thread for exporting G-code
     if ($self->{export_gcode_output_file}) {
@@ -988,7 +1010,7 @@ sub on_process_completed {
         # workaround for "Attempt to free un referenced scalar..."
         our $_thread_self = $self;
         
-        $self->{export_thread} = threads->create(sub {
+        $self->{export_thread} = Slic3r::spawn_thread(sub {
             local $SIG{'KILL'} = sub {
                 Slic3r::debugf "Export process cancelled; exiting thread...\n";
                 Slic3r::thread_cleanup();
@@ -1147,29 +1169,33 @@ sub update {
     $self->{canvas}->Refresh;
 }
 
+sub on_extruders_change {
+    my ($self, $num_extruders) = @_;
+    
+    my $choices = $self->{preset_choosers}{filament};
+    while (@$choices < $num_extruders) {
+        my @presets = $choices->[0]->GetStrings;
+        push @$choices, Wx::Choice->new($self, -1, wxDefaultPosition, [150, -1], [@presets]);
+        $choices->[-1]->SetFont($Slic3r::GUI::small_font);
+        $self->{preset_choosers_sizers}{filament}->Add($choices->[-1], 0, wxEXPAND | wxBOTTOM, FILAMENT_CHOOSERS_SPACING);
+        EVT_CHOICE($choices->[-1], $choices->[-1], sub { $self->_on_select_preset('filament', @_) });
+        my $i = first { $choices->[-1]->GetString($_) eq ($Slic3r::GUI::Settings->{presets}{"filament_" . $#$choices} || '') } 0 .. $#presets;
+        $choices->[-1]->SetSelection($i || 0);
+    }
+    while (@$choices > $num_extruders) {
+        $self->{preset_choosers_sizers}{filament}->Remove(-1);
+        $choices->[-1]->Destroy;
+        pop @$choices;
+    }
+    $self->Layout;
+}
+
 sub on_config_change {
     my $self = shift;
-    my ($opt_key, $value) = @_;
+    my ($config) = @_;
     
-    if ($opt_key eq 'extruders_count' && defined $value) {
-        my $choices = $self->{preset_choosers}{filament};
-        while (@$choices < $value) {
-        	my @presets = $choices->[0]->GetStrings;
-            push @$choices, Wx::Choice->new($self, -1, wxDefaultPosition, [150, -1], [@presets]);
-            $choices->[-1]->SetFont($Slic3r::GUI::small_font);
-            $self->{preset_choosers_sizers}{filament}->Add($choices->[-1], 0, wxEXPAND | wxBOTTOM, FILAMENT_CHOOSERS_SPACING);
-            EVT_CHOICE($choices->[-1], $choices->[-1], sub { $self->on_select_preset('filament', @_) });
-            my $i = first { $choices->[-1]->GetString($_) eq ($Slic3r::GUI::Settings->{presets}{"filament_" . $#$choices} || '') } 0 .. $#presets;
-        	$choices->[-1]->SetSelection($i || 0);
-        }
-        while (@$choices > $value) {
-            $self->{preset_choosers_sizers}{filament}->Remove(-1);
-            $choices->[-1]->Destroy;
-            pop @$choices;
-        }
-        $self->Layout;
-    } elsif ($self->{config}->has($opt_key)) {
-        $self->{config}->set($opt_key, $value);
+    foreach my $opt_key (@{$self->{config}->diff($config)}) {
+        $self->{config}->set($opt_key, $config->get($opt_key));
         if ($opt_key eq 'bed_shape') {
             $self->{canvas}->update_bed_size;
             $self->update;
@@ -1252,6 +1278,7 @@ sub object_settings_dialog {
 		object          => $self->{objects}[$obj_idx],
 		model_object    => $model_object,
 	);
+	$self->suspend_background_process;
 	$dlg->ShowModal;
 	
 	# update thumbnail since parts may have changed
@@ -1261,9 +1288,26 @@ sub object_settings_dialog {
 	
 	# update print
 	if ($dlg->PartsChanged || $dlg->PartSettingsChanged) {
+	    $self->stop_background_process;
+        $self->resume_background_process;
         $self->{print}->reload_object($obj_idx);
         $self->schedule_background_process;
+    } else {
+        $self->resume_background_process;
     }
+}
+
+sub toolpaths_preview {
+    my ($self) = @_;
+    
+    # TODO: we should check whether steps are done in $print rather then checking the thread
+    if ($self->{process_thread}) {
+        Slic3r::GUI::show_error($self, "Unable to show preview while toolpaths are being generated.");
+        return;
+    }
+    
+    my $dlg = Slic3r::GUI::Plater::2DToolpaths::Dialog->new($self, $self->{print});
+	$dlg->ShowModal;
 }
 
 sub object_list_changed {

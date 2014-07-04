@@ -167,11 +167,11 @@ sub add_model_object {
     # initialize print object and store it at the given position
     my $o;
     if (defined $obj_idx) {
-        $o = $self->set_new_object($obj_idx, $object, $object->bounding_box);
+        $o = $self->set_new_object($obj_idx, $object, $object->raw_bounding_box);
     } else {
-        $o = $self->add_object($object, $object->bounding_box);
+        $o = $self->add_object($object, $object->raw_bounding_box);
     }
-
+    
     $o->set_copies([ map Slic3r::Point->new_scale(@{ $_->offset }), @{ $object->instances } ]);
     $o->set_layer_height_ranges($object->layer_height_ranges);
 
@@ -348,6 +348,11 @@ sub total_layer_count {
 sub regions_count {
     my $self = shift;
     return scalar @{$self->regions};
+}
+
+sub max_layer_height {
+    my ($self) = @_;
+    return max(@{$self->config->nozzle_diameter});
 }
 
 sub bounding_box {

@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use utf8;
 
-use File::Basename qw/dirname/;
+use File::Basename qw(basename dirname);
 use List::Util qw(min);
 use Slic3r::Geometry qw(X Y Z);
 use Wx qw(:frame :bitmap :id :misc :notebook :panel :sizer :menu :dialog :filedialog
@@ -55,7 +55,7 @@ sub new {
         $sizer->SetSizeHints($self);
         $self->SetSizer($sizer);
         $self->Fit;
-        $self->SetMinSize([760, 470]);
+        $self->SetMinSize([760, 490]);
         $self->SetSize($self->GetMinSize);
         $self->Show;
         $self->Layout;
@@ -69,8 +69,9 @@ sub _init_tabpanel {
     
     $self->{tabpanel} = my $panel = Wx::Notebook->new($self, -1, wxDefaultPosition, wxDefaultSize, wxNB_TOP | wxTAB_TRAVERSAL);
     
-    $panel->AddPage($self->{plater} = Slic3r::GUI::Plater->new($panel), "Plater")
-        unless $self->{no_plater};
+    if (!$self->{no_plater}) {
+        $panel->AddPage($self->{plater} = Slic3r::GUI::Plater->new($panel), "Plater");
+    }
     $self->{options_tabs} = {};
     
     my $simple_config;
@@ -82,30 +83,43 @@ sub _init_tabpanel {
     my $class_prefix = $self->{mode} eq 'simple' ? "Slic3r::GUI::SimpleTab::" : "Slic3r::GUI::Tab::";
     for my $tab_name (qw(print filament printer)) {
         my $tab;
-        $tab = $self->{options_tabs}{$tab_name} = ($class_prefix . ucfirst $tab_name)->new(
-            $panel,
-            on_value_change     => sub {
-                $self->{plater}->on_config_change(@_) if $self->{plater}; # propagate config change events to the plater
-                if ($self->{loaded}) {  # don't save while loading for the first time
-                    if ($self->{mode} eq 'simple') {
-                        # save config
-                        $self->config->save("$Slic3r::GUI::datadir/simple.ini");
-                        
-                        # save a copy into each preset section
-                        # so that user gets the config when switching to expert mode
-                        $tab->config->save(sprintf "$Slic3r::GUI::datadir/%s/%s.ini", $tab->name, 'Simple Mode');
-                        $Slic3r::GUI::Settings->{presets}{$tab->name} = 'Simple Mode.ini';
-                        wxTheApp->save_settings;
-                    }
-                    $self->config->save($Slic3r::GUI::autosave) if $Slic3r::GUI::autosave;
+        $tab = $self->{options_tabs}{$tab_name} = ($class_prefix . ucfirst $tab_name)->new($panel);
+        $tab->on_value_change(sub {
+            my $config = $tab->config;
+            $self->{plater}->on_config_change($config) if $self->{plater}; # propagate config change events to the plater
+            if ($self->{loaded}) {  # don't save while loading for the first time
+                if ($self->{mode} eq 'simple') {
+                    # save config
+                    $self->config->save("$Slic3r::GUI::datadir/simple.ini");
+                    
+                    # save a copy into each preset section
+                    # so that user gets the config when switching to expert mode
+                    $config->save(sprintf "$Slic3r::GUI::datadir/%s/%s.ini", $tab->name, 'Simple Mode');
+                    $Slic3r::GUI::Settings->{presets}{$tab->name} = 'Simple Mode.ini';
+                    wxTheApp->save_settings;
                 }
-            },
-            on_presets_changed  => sub {
-                $self->{plater}->update_presets($tab_name, @_) if $self->{plater};
-            },
-        );
+                $self->config->save($Slic3r::GUI::autosave) if $Slic3r::GUI::autosave;
+            }
+        });
+        $tab->on_presets_changed(sub {
+            if ($self->{plater}) {
+                $self->{plater}->update_presets($tab_name, @_);
+                $self->{plater}->on_config_change($tab->config);
+            }
+        });
+        $tab->load_presets;
         $panel->AddPage($tab, $tab->title);
         $tab->load_config($simple_config) if $simple_config;
+    }
+    
+    if ($self->{plater}) {
+        $self->{plater}->on_select_preset(sub {
+            my ($group, $preset) = @_;
+	        $self->{options_tabs}{$group}->select_preset($preset);
+        });
+        
+        # load initial config
+        $self->{plater}->on_config_change($self->config);
     }
 }
 
@@ -155,11 +169,11 @@ sub _init_menubar {
         $fileMenu->AppendSeparator();
         $self->_append_menu_item($fileMenu, "Preferences…", 'Application preferences', sub {
             Slic3r::GUI::Preferences->new($self)->ShowModal;
-        });
+        }, wxID_PREFERENCES);
         $fileMenu->AppendSeparator();
         $self->_append_menu_item($fileMenu, "&Quit", 'Quit Slic3r', sub {
             $self->Close(0);
-        });
+        }, wxID_EXIT);
     }
     
     # Plater menu
@@ -175,6 +189,10 @@ sub _init_menubar {
         });
         $self->_append_menu_item($self->{plater_menu}, "Export AMF...", 'Export current plate as AMF', sub {
             $plater->export_amf;
+        });
+        $self->{plater_menu}->AppendSeparator();
+        $self->_append_menu_item($self->{plater_menu}, "Toolpaths preview…", 'Open a viewer with toolpaths preview', sub {
+            $plater->toolpaths_preview;
         });
         
         $self->{object_menu} = $self->{plater}->object_menu;
@@ -296,8 +314,11 @@ sub quick_slice {
             },
         );
         
+        # keep model around
+        my $model = Slic3r::Model->read_from_file($input_file);
+        
         $sprint->apply_config($config);
-        $sprint->set_model(Slic3r::Model->read_from_file($input_file));
+        $sprint->set_model($model);
         
         {
             my $extra = $self->extra_variables;
@@ -544,7 +565,7 @@ sub load_config {
     my ($config) = @_;
     
     foreach my $tab (values %{$self->{options_tabs}}) {
-        $tab->set_value($_, $config->$_) for @{$config->get_keys};
+        $tab->load_config($config);
     }
 }
 
@@ -633,6 +654,11 @@ This method collects all config values from the tabs and merges them into a sing
 sub config {
     my $self = shift;
     
+    return Slic3r::Config->new_from_defaults
+        if !exists $self->{options_tabs}{print}
+            || !exists $self->{options_tabs}{filament}
+            || !exists $self->{options_tabs}{printer};
+    
     # retrieve filament presets and build a single config object for them
     my $filament_config;
     if (!$self->{plater} || $self->{plater}->filament_presets == 1 || $self->{mode} eq 'simple') {
@@ -679,17 +705,6 @@ sub config {
     return $config;
 }
 
-sub set_value {
-    my $self = shift;
-    my ($opt_key, $value) = @_;
-    
-    my $changed = 0;
-    foreach my $tab (values %{$self->{options_tabs}}) {
-        $changed = 1 if $tab->set_value($opt_key, $value);
-    }
-    return $changed;
-}
-
 sub check_unsaved_changes {
     my $self = shift;
     
@@ -710,9 +725,9 @@ sub select_tab {
 }
 
 sub _append_menu_item {
-    my ($self, $menu, $string, $description, $cb) = @_;
+    my ($self, $menu, $string, $description, $cb, $id) = @_;
     
-    my $id = &Wx::NewId();
+    $id //= &Wx::NewId();
     my $item = $menu->Append($id, $string, $description);
     EVT_MENU($self, $id, $cb);
     return $item;
