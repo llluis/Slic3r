@@ -68,7 +68,8 @@ sub new {
     # right pane with preview canvas
     my $canvas;
     if ($Slic3r::GUI::have_OpenGL) {
-        $canvas = $self->{canvas} = Slic3r::GUI::PreviewCanvas->new($self, $self->{model_object});
+        $canvas = $self->{canvas} = Slic3r::GUI::PreviewCanvas->new($self);
+        $canvas->load_object($self->{model_object});
         $canvas->SetSize([500,500]);
     }
     
@@ -106,16 +107,12 @@ sub reload_tree {
     
     $tree->DeleteChildren($rootId);
     
+    my $itemId;
     foreach my $volume_id (0..$#{$object->volumes}) {
         my $volume = $object->volumes->[$volume_id];
         
-        my $material_id = $volume->material_id // '_';
-        my $material_name = $material_id eq '_'
-            ? sprintf("Part #%d", $volume_id+1)
-            : $object->model->get_material_name($material_id);
-        
         my $icon = $volume->modifier ? ICON_MODIFIERMESH : ICON_SOLIDMESH;
-        my $itemId = $tree->AppendItem($rootId, $material_name, $icon);
+        $itemId = $tree->AppendItem($rootId, $volume->name || $volume_id, $icon);
         $tree->SetPlData($itemId, {
             type        => 'volume',
             volume_id   => $volume_id,
@@ -123,7 +120,11 @@ sub reload_tree {
     }
     $tree->ExpandAll;
     
-    $self->selection_changed;
+    # select last appended part
+    # This will trigger the selection_changed() event
+    Slic3r::GUI->CallAfter(sub {
+        $self->{tree}->SelectItem($itemId);
+    });
 }
 
 sub get_selection {
@@ -158,16 +159,13 @@ sub selection_changed {
             }
             $self->{btn_delete}->Enable;
             
-            # attach volume material config to settings panel
+            # attach volume config to settings panel
             my $volume = $self->{model_object}->volumes->[ $itemData->{volume_id} ];
-            my $material = $self->{model_object}->model->get_material($volume->material_id // '_');
-            $material //= $volume->assign_unique_material;
+            $config = $volume->config;
             $self->{staticbox}->SetLabel('Part Settings');
             
             # get default values
             @opt_keys = @{Slic3r::Config::PrintRegion->new->get_keys};
-            
-            $config = $material->config;
         } elsif ($itemData->{type} eq 'object') {
             # select all object volumes in 3D preview
             if ($self->{canvas}) {
@@ -211,21 +209,13 @@ sub on_btn_load {
             foreach my $volume (@{$object->volumes}) {
                 my $new_volume = $self->{model_object}->add_volume($volume);
                 $new_volume->set_modifier($is_modifier);
-                if (!defined $new_volume->material_id) {
-                    # it looks like this block is never entered because all input volumes seem to have an assigned material
-                    # TODO: check we can assume that for any input format
-                    my $material_name = basename($input_file);
-                    $material_name =~ s/\.(stl|obj)$//i;
-                    my $material = $self->{model_object}->model->set_material($material_name);
-                    $new_volume->material_id($material_name);
-                }
+                $new_volume->set_name(basename($input_file));
                 
                 # apply the same translation we applied to the object
                 $new_volume->mesh->translate(@{$self->{model_object}->origin_translation}, 0);
                 
                 # set a default extruder value, since user can't add it manually
-                my $material = $self->{model_object}->model->get_material($new_volume->material_id);
-                $material->config->set_ifndef('extruder', 1);
+                $new_volume->config->set_ifndef('extruder', 0);
                 
                 $self->{parts_changed} = 1;
             }
