@@ -356,6 +356,8 @@ sub max_layer_height {
     return max(@{$self->config->nozzle_diameter});
 }
 
+# the bounding box of objects placed in copies position
+# (without taking skirt/brim/support material into account)
 sub bounding_box {
     my $self = shift;
     
@@ -368,6 +370,30 @@ sub bounding_box {
         }
     }
     return Slic3r::Geometry::BoundingBox->new_from_points([ map Slic3r::Point->new(@$_), @points ]);
+}
+
+# the total bounding box of extrusions, including skirt/brim/support material
+sub total_bounding_box {
+    my ($self) = @_;
+    
+    # get objects bounding box
+    my $bb = $self->bounding_box;
+    
+    # check how much we need to increase it
+    my $extra = 0;
+    if ($self->has_support_material) {
+        $extra = &Slic3r::Print::SupportMaterial::MARGIN;
+    }
+    $extra = max($extra, $self->config->brim_width);
+    if ($self->config->skirts > 0) {
+        my $skirt_flow = $self->skirt_flow;
+        $extra = max($extra, $self->config->brim_width + $self->config->skirt_distance + ($self->config->skirts * $skirt_flow->spacing));
+    }
+    
+    if ($extra > 0) {
+        $bb->offset(scale $extra);
+    }
+    return $bb;
 }
 
 sub size {
@@ -602,14 +628,8 @@ sub make_skirt {
     # skirt may be printed on several layers, having distinct layer heights,
     # but loops must be aligned so can't vary width/spacing
     # TODO: use each extruder's own flow
-    my $first_layer_height = $self->objects->[0]->config->get_value('first_layer_height');
-    my $flow = Slic3r::Flow->new_from_width(
-        width               => ($self->config->first_layer_extrusion_width || $self->regions->[0]->config->perimeter_extrusion_width),
-        role                => FLOW_ROLE_PERIMETER,
-        nozzle_diameter     => $self->config->nozzle_diameter->[0],
-        layer_height        => $first_layer_height,
-        bridge_flow_ratio   => 0,
-    );
+    my $first_layer_height = $self->skirt_first_layer_height;
+    my $flow = $self->skirt_flow;
     my $spacing = $flow->spacing;
     my $mm3_per_mm = $flow->mm3_per_mm;
     
@@ -618,7 +638,7 @@ sub make_skirt {
     
     # draw outlines from outside to inside
     # loop while we have less skirts than required or any extruder hasn't reached the min length if any
-    my $distance = scale $self->config->skirt_distance;
+    my $distance = scale max($self->config->skirt_distance, $self->config->brim_width);
     for (my $i = $self->config->skirts; $i > 0; $i--) {
         $distance += scale $spacing;
         my $loop = offset([$convex_hull], $distance, 1, JT_ROUND, scale(0.1))->[0];
@@ -677,14 +697,8 @@ sub make_brim {
     $self->status_cb->(88, "Generating brim");
     
     # brim is only printed on first layer and uses support material extruder
-    my $first_layer_height = $self->objects->[0]->config->get_abs_value('first_layer_height');
-    my $flow = Slic3r::Flow->new_from_width(
-        width               => ($self->config->first_layer_extrusion_width || $self->regions->[0]->config->perimeter_extrusion_width),
-        role                => FLOW_ROLE_PERIMETER,
-        nozzle_diameter     => $self->config->get_at('nozzle_diameter', $self->objects->[0]->config->support_material_extruder-1),
-        layer_height        => $first_layer_height,
-        bridge_flow_ratio   => 0,
-    );
+    my $first_layer_height = $self->skirt_first_layer_height;
+    my $flow = $self->skirt_flow;
     my $mm3_per_mm = $flow->mm3_per_mm;
     
     my $grow_distance = $flow->scaled_width / 2;
@@ -709,12 +723,6 @@ sub make_brim {
         }
     }
     
-    # if brim touches skirt, make it around skirt too
-    # TODO: calculate actual skirt width (using each extruder's flow in multi-extruder setups)
-    if ($self->config->skirt_distance + (($self->config->skirts - 1) * $flow->spacing) <= $self->config->brim_width) {
-        push @islands, map @{$_->polygon->split_at_first_point->grow($grow_distance)}, @{$self->skirt};
-    }
-    
     my @loops = ();
     my $num_loops = sprintf "%.0f", $self->config->brim_width / $flow->width;
     for my $i (reverse 1 .. $num_loops) {
@@ -736,6 +744,23 @@ sub make_brim {
     ), reverse @{union_pt_chained(\@loops)});
     
     $self->set_step_done(STEP_BRIM);
+}
+
+sub skirt_first_layer_height {
+    my ($self) = @_;
+    return $self->objects->[0]->config->get_abs_value('first_layer_height');
+}
+
+sub skirt_flow {
+    my ($self) = @_;
+    
+    return Slic3r::Flow->new_from_width(
+        width               => ($self->config->first_layer_extrusion_width || $self->regions->[0]->config->perimeter_extrusion_width),
+        role                => FLOW_ROLE_PERIMETER,
+        nozzle_diameter     => $self->config->get_at('nozzle_diameter', $self->objects->[0]->config->support_material_extruder-1),
+        layer_height        => $self->skirt_first_layer_height,
+        bridge_flow_ratio   => 0,
+    );
 }
 
 sub write_gcode {
