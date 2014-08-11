@@ -101,10 +101,18 @@ Line::atan2_() const
 }
 
 double
+Line::orientation() const
+{
+    double angle = this->atan2_();
+    if (angle < 0) angle = 2*PI + angle;
+    return angle;
+}
+
+double
 Line::direction() const
 {
     double atan2 = this->atan2_();
-    return (atan2 == PI) ? 0
+    return (fabs(atan2 - PI) < EPSILON) ? 0
         : (atan2 < 0) ? (atan2 + PI)
         : atan2;
 }

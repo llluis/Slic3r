@@ -7,7 +7,7 @@ use strict;
 use warnings;
 require v5.10;
 
-our $VERSION = "1.2.0-dev";
+our $VERSION = "1.2.0";
 
 our $debug = 0;
 sub debugf {
@@ -69,7 +69,6 @@ use Slic3r::Polygon;
 use Slic3r::Polyline;
 use Slic3r::Print;
 use Slic3r::Print::Object;
-use Slic3r::Print::Region;
 use Slic3r::Print::Simple;
 use Slic3r::Print::SupportMaterial;
 use Slic3r::Surface;
