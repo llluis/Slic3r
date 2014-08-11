@@ -220,6 +220,7 @@ sub on_select_preset {
             ? $self->{btn_delete_preset}->Disable
             : $self->{btn_delete_preset}->Enable;
         
+        $self->_update;
         $self->on_preset_loaded;
         $self->reload_config;
         
@@ -682,8 +683,15 @@ sub _update {
     
     my $config = $self->{config};
     
+    # we enable spiral vase if other settings are compatible with it
+    # or if it is enabled (this prevents the checkbox from being disabled
+    # when an incompatible setting is set)
+    $self->get_field('spiral_vase')->toggle(
+        ($config->perimeters == 1 && $config->top_solid_layers == 0 && $config->fill_density == 0)
+            || $config->spiral_vase
+    );
+    
     my $have_perimeters = $config->perimeters > 0;
-    $self->get_field('spiral_vase')->toggle($config->perimeters == 1 && $config->top_solid_layers == 0 && $config->fill_density == 0);
     $self->get_field($_)->toggle($have_perimeters)
         for qw(extra_perimeters thin_walls overhangs seam_position external_perimeters_first);
     

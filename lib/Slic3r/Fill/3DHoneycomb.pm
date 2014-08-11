@@ -10,11 +10,29 @@ use Slic3r::Geometry::Clipper qw(intersection_pl);
 sub fill_surface {
     my ($self, $surface, %params) = @_;
     
+    # use bridge flow since most of this pattern hangs in air
+    my $flow = Slic3r::Flow->new(
+        width               => $params{flow}->width,
+        height              => $params{flow}->height,
+        nozzle_diameter     => $params{flow}->nozzle_diameter,
+        bridge              => 1,
+    );
+    
     my $expolygon = $surface->expolygon;
     my $bb = $expolygon->bounding_box;
     my $size = $bb->size;
     
-    my $distance = $params{flow}->scaled_spacing / $params{density};
+    my $distance = $flow->scaled_spacing / $params{density};
+    
+    # align bounding box to a multiple of our honeycomb grid
+    {
+        my $min = $bb->min_point;
+        $min->translate(
+            -($bb->x_min % $distance),
+            -($bb->y_min % $distance),
+        );
+        $bb->merge_point($min);
+    }
     
     # generate pattern
     my @polylines = map Slic3r::Polyline->new(@$_),
@@ -23,7 +41,7 @@ sub fill_surface {
             $distance,
             ceil($size->x / $distance),
             ceil($size->y / $distance),  #//
-            ($self->layer_id % 2) + 1,
+            (($self->layer_id / $surface->thickness_layers) % 2) + 1,
         );
     
     # move pattern in place
@@ -53,7 +71,7 @@ sub fill_surface {
     }
     
     # TODO: return ExtrusionLoop objects to get better chained paths
-    return { flow => $params{flow} }, @polylines;
+    return { flow => $flow}, @polylines;
 }
 
 
@@ -167,11 +185,13 @@ curveType specifies which lines to print, 1 for vertical lines
 sub makeNormalisedGrid {
     my ($z, $gridWidth, $gridHeight, $curveType) = @_;
     
-    # offset required to create a regular octagram
-    my $octagramGap = 1 / (1 + sqrt(2));
+    ## offset required to create a regular octagram
+    my $octagramGap = 0.5;
     
     # sawtooth wave function for range f($z) = [-$octagramGap .. $octagramGap]
-    my $offset = (abs((fmod($z * sqrt(2), 4)) - 2) - 1) * $octagramGap;
+    my $a = sqrt(2);  # period
+    my $wave = abs(fmod($z, $a) - $a/2)/$a*4 - 1;
+    my $offset = $wave * $octagramGap;
     
     my @points = ();
     if (($curveType & 1) != 0) {
