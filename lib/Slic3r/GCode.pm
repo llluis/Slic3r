@@ -292,7 +292,10 @@ sub _extrude_path {
     # calculate extrusion length per distance unit
     my $e = $self->extruder->e_per_mm3 * $path->mm3_per_mm;
     $e = 0 if !$self->config->get_extrusion_axis;
-    
+
+    # adjusts flow
+    $e *= $self->config->get_abs_value('perimeter_flow_ratio') if $path->is_perimeter;
+
     # set speed
     my $F;
     if ($path->role == EXTR_ROLE_PERIMETER) {

@@ -448,7 +448,7 @@ sub build {
         extrusion_width first_layer_extrusion_width perimeter_extrusion_width 
         external_perimeter_extrusion_width infill_extrusion_width solid_infill_extrusion_width 
         top_infill_extrusion_width support_material_extrusion_width
-        bridge_flow_ratio
+        bridge_flow_ratio perimeter_flow_ratio
         xy_size_compensation threads resolution
     ));
     
@@ -668,6 +668,7 @@ sub build {
         {
             my $optgroup = $page->new_optgroup('Flow');
             $optgroup->append_single_option_line('bridge_flow_ratio');
+            $optgroup->append_single_option_line('perimeter_flow_ratio');
         }
         {
             my $optgroup = $page->new_optgroup('Other');

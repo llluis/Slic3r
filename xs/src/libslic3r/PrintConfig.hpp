@@ -199,6 +199,7 @@ class PrintRegionConfig : public virtual StaticPrintConfig
     public:
     ConfigOptionInt                 bottom_solid_layers;
     ConfigOptionFloat               bridge_flow_ratio;
+    ConfigOptionFloat               perimeter_flow_ratio;
     ConfigOptionFloat               bridge_speed;
     ConfigOptionFloatOrPercent      external_perimeter_extrusion_width;
     ConfigOptionFloatOrPercent      external_perimeter_speed;
@@ -231,6 +232,7 @@ class PrintRegionConfig : public virtual StaticPrintConfig
     PrintRegionConfig() : StaticPrintConfig() {
         this->bottom_solid_layers.value                          = 3;
         this->bridge_flow_ratio.value                            = 1;
+        this->perimeter_flow_ratio.value                         = 1;
         this->bridge_speed.value                                 = 60;
         this->external_perimeter_extrusion_width.value           = 0;
         this->external_perimeter_extrusion_width.percent         = false;
@@ -273,6 +275,7 @@ class PrintRegionConfig : public virtual StaticPrintConfig
     ConfigOption* option(const t_config_option_key opt_key, bool create = false) {
         if (opt_key == "bottom_solid_layers")                        return &this->bottom_solid_layers;
         if (opt_key == "bridge_flow_ratio")                          return &this->bridge_flow_ratio;
+        if (opt_key == "perimeter_flow_ratio")                       return &this->perimeter_flow_ratio;
         if (opt_key == "bridge_speed")                               return &this->bridge_speed;
         if (opt_key == "external_perimeter_extrusion_width")         return &this->external_perimeter_extrusion_width;
         if (opt_key == "external_perimeter_speed")                   return &this->external_perimeter_speed;
