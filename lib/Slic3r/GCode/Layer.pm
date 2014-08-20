@@ -45,7 +45,7 @@ sub _build_pressure_management {
     my $self = shift;
     
     my $extruder = $self->gcodegen->extruder;
-    return $extruder->pressure_multiplier > 0
+    return $extruder->pressure_multiplier > 0 && !$extruder->wipe
         ? Slic3r::GCode::PressureManagement->new(
             pressure => $extruder->pressure_multiplier,
             relative => $self->print->config->use_relative_e_distances,
@@ -217,7 +217,7 @@ sub process_layer {
     
     # pressure management post-processing filter if enabled
     $gcode = $self->pressure_management->process_layer($gcode)
-        if $self->gcodegen->extruder->pressure_multiplier > 0;
+        if defined $self->pressure_management;
 
     return $gcode;
 }

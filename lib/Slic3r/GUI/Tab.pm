@@ -1106,7 +1106,10 @@ sub _update {
         # some options only apply when not using firmware retraction
         $self->get_field($_, $i)->toggle($retraction && !$config->use_firmware_retraction)
             for qw(retract_speed unretract_speed retract_restart_extra wipe);
-        
+ 
+        # pressure advance cannot be used with wipe enabled
+        $self->get_field('pressure_multiplier', $i)->toggle(!$config->get_at('wipe', $i));
+
         my $toolchange_retraction = $config->get_at('retract_length_toolchange', $i) > 0;
         $self->get_field($_, $i)->toggle($toolchange_retraction)
             for qw(retract_restart_extra_toolchange);
