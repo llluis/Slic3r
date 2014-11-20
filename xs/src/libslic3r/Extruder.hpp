@@ -17,6 +17,7 @@ class Extruder
     double restart_extra;
     double e_per_mm3;
     double retract_speed_mm_min;
+    double unretract_speed_mm_min;
     
     Extruder(int id, GCodeConfig *config);
     virtual ~Extruder() {}

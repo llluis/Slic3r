@@ -45,7 +45,7 @@ sub _build_pressure_management {
     my $self = shift;
 
     my $extruder = $self->gcodegen->writer->extruder;
-    return $extruder->pressure_multiplier > 0 && !$extruder->wipe
+    return $extruder->pressure_multiplier > 0 && !$self->gcodegen->enable_wipe
         ? Slic3r::GCode::PressureManagement->new(
             pressure => $extruder->pressure_multiplier,
             relative => $self->print->config->use_relative_e_distances,

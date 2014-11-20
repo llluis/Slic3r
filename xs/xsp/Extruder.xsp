@@ -39,6 +39,8 @@
         %code%{ RETVAL = THIS->e_per_mm3; %};
     double retract_speed_mm_min()
         %code%{ RETVAL = THIS->retract_speed_mm_min; %};
+    double unretract_speed_mm_min()
+        %code%{ RETVAL = THIS->unretract_speed_mm_min; %};
     
     double filament_diameter();
     double extrusion_multiplier();

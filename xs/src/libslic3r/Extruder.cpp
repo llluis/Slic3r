@@ -12,6 +12,7 @@ Extruder::Extruder(int id, GCodeConfig *config)
     this->e_per_mm3 = this->extrusion_multiplier()
         * (4 / ((this->filament_diameter() * this->filament_diameter()) * PI));
     this->retract_speed_mm_min = this->retract_speed() * 60;
+    this->unretract_speed_mm_min = this->unretract_speed() * 60;
 }
 
 void
