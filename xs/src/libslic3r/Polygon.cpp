@@ -96,7 +96,7 @@ double
 Polygon::area() const
 {
     ClipperLib::Path p;
-    Slic3rMultiPoint_to_ClipperPath(*this, p);
+    Slic3rMultiPoint_to_ClipperPath(*this, &p);
     return ClipperLib::Area(p);
 }
 
@@ -104,7 +104,7 @@ bool
 Polygon::is_counter_clockwise() const
 {
     ClipperLib::Path p;
-    Slic3rMultiPoint_to_ClipperPath(*this, p);
+    Slic3rMultiPoint_to_ClipperPath(*this, &p);
     return ClipperLib::Orientation(p);
 }
 
@@ -163,7 +163,7 @@ Polygon::simplify(double tolerance) const
     
     Polygons pp;
     pp.push_back(p);
-    simplify_polygons(pp, pp);
+    simplify_polygons(pp, &pp);
     return pp;
 }
 
@@ -207,6 +207,19 @@ Polygon::centroid() const
     }
     
     return Point(x_temp/(6*area_temp), y_temp/(6*area_temp));
+}
+
+std::string
+Polygon::wkt() const
+{
+    std::ostringstream wkt;
+    wkt << "POLYGON((";
+    for (Points::const_iterator p = this->points.begin(); p != this->points.end(); ++p) {
+        wkt << p->x << " " << p->y;
+        if (p != this->points.end()-1) wkt << ",";
+    }
+    wkt << "))";
+    return wkt.str();
 }
 
 #ifdef SLIC3RXS

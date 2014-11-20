@@ -7,9 +7,9 @@ use File::Spec;
 use List::Util qw(min max first sum);
 use Slic3r::ExtrusionPath ':roles';
 use Slic3r::Flow ':roles';
-use Slic3r::Geometry qw(X Y Z X1 Y1 X2 Y2 MIN MAX PI scale unscale move_points chained_path
+use Slic3r::Geometry qw(X Y Z X1 Y1 X2 Y2 MIN MAX PI scale unscale chained_path
     convex_hull);
-use Slic3r::Geometry::Clipper qw(diff_ex union_ex union_pt intersection_ex intersection offset
+use Slic3r::Geometry::Clipper qw(diff_ex union_ex intersection_ex intersection offset
     offset2 union union_pt_chained JT_ROUND JT_SQUARE);
 use Slic3r::Print::State ':steps';
 
@@ -32,276 +32,6 @@ sub set_status_cb {
 
 sub status_cb {
     return $status_cb // sub {};
-}
-
-sub apply_config {
-    my ($self, $config) = @_;
-    
-    $config = $config->clone;
-    $config->normalize;
-    
-    # apply variables to placeholder parser
-    $self->placeholder_parser->apply_config($config);
-    
-    my $invalidated = 0;
-    
-    # handle changes to print config
-    my $print_diff = $self->config->diff($config);
-    if (@$print_diff) {
-        $self->config->apply_dynamic($config);
-        
-        $invalidated = 1
-            if $self->invalidate_state_by_config_options($print_diff);
-    }
-    
-    # handle changes to object config defaults
-    $self->default_object_config->apply_dynamic($config);
-    foreach my $object (@{$self->objects}) {
-        # we don't assume that $config contains a full ObjectConfig,
-        # so we base it on the current print-wise default
-        my $new = $self->default_object_config->clone;
-        $new->apply_dynamic($config);
-        
-        # we override the new config with object-specific options
-        my $model_object_config = $object->model_object->config->clone;
-        $model_object_config->normalize;
-        $new->apply_dynamic($model_object_config);
-        
-        # check whether the new config is different from the current one
-        my $diff = $object->config->diff($new);
-        if (@$diff) {
-            $object->config->apply($new);
-            
-            $invalidated = 1
-                if $object->invalidate_state_by_config_options($diff);
-        }
-    }
-    
-    # handle changes to regions config defaults
-    $self->default_region_config->apply_dynamic($config);
-    
-    # All regions now have distinct settings.
-    # Check whether applying the new region config defaults we'd get different regions.
-    my $rearrange_regions = 0;
-    my @other_region_configs = ();
-    REGION: foreach my $region_id (0..($self->region_count - 1)) {
-        my $region = $self->regions->[$region_id];
-        my @this_region_configs = ();
-        foreach my $object (@{$self->objects}) {
-            foreach my $volume_id (@{ $object->get_region_volumes($region_id) }) {
-                my $volume = $object->model_object->volumes->[$volume_id];
-                
-                my $new = $self->default_region_config->clone;
-                {
-                    my $model_object_config = $object->model_object->config->clone;
-                    $model_object_config->normalize;
-                    $new->apply_dynamic($model_object_config);
-                }
-                if ($volume->material_id ne '') {
-                    my $material_config = $object->model_object->model->get_material($volume->material_id)->config->clone;
-                    $material_config->normalize;
-                    $new->apply_dynamic($material_config);
-                }
-                if (defined first { !$_->equals($new) } @this_region_configs) {
-                    # if the new config for this volume differs from the other
-                    # volume configs currently associated to this region, it means
-                    # the region subdivision does not make sense anymore
-                    $rearrange_regions = 1;
-                    last REGION;
-                }
-                push @this_region_configs, $new;
-                
-                if (defined first { $_->equals($new) } @other_region_configs) {
-                    # if the new config for this volume equals any of the other
-                    # volume configs that are not currently associated to this
-                    # region, it means the region subdivision does not make
-                    # sense anymore
-                    $rearrange_regions = 1;
-                    last REGION;
-                }
-                
-                # if we're here and the new region config is different from the old
-                # one, we need to apply the new config and invalidate all objects
-                # (possible optimization: only invalidate objects using this region)
-                my $region_config_diff = $region->config->diff($new);
-                if (@$region_config_diff) {
-                    $region->config->apply($new);
-                    foreach my $o (@{$self->objects}) {
-                        $invalidated = 1
-                            if $o->invalidate_state_by_config_options($region_config_diff);
-                    }
-                }
-            }
-        }
-        push @other_region_configs, @this_region_configs;
-    }
-    
-    if ($rearrange_regions) {
-        # the current subdivision of regions does not make sense anymore.
-        # we need to remove all objects and re-add them
-        my @model_objects = map $_->model_object, @{$self->objects};
-        $self->clear_objects;
-        $self->add_model_object($_) for @model_objects;
-        $invalidated = 1;
-    }
-    
-    return $invalidated;
-}
-
-# caller is responsible for supplying models whose objects don't collide
-# and have explicit instance positions
-sub add_model_object {
-    my $self = shift;
-    my ($object, $obj_idx) = @_;
-    
-    my $object_config = $object->config->clone;
-    $object_config->normalize;
-
-    # initialize print object and store it at the given position
-    my $o;
-    if (defined $obj_idx) {
-        $o = $self->set_new_object($obj_idx, $object, $object->raw_bounding_box);
-    } else {
-        $o = $self->add_object($object, $object->raw_bounding_box);
-    }
-    
-    $o->set_copies([ map Slic3r::Point->new_scale(@{ $_->offset }), @{ $object->instances } ]);
-    $o->set_layer_height_ranges($object->layer_height_ranges);
-
-    # TODO: translate _trigger_copies to C++, then this can be done by
-        # PrintObject constructor
-    $o->_trigger_copies;
-
-    foreach my $volume_id (0..$#{$object->volumes}) {
-        my $volume = $object->volumes->[$volume_id];
-        
-        # get the config applied to this volume: start from our global defaults
-        my $config = Slic3r::Config::PrintRegion->new;
-        $config->apply($self->default_region_config);
-        
-        # override the defaults with per-object config and then with per-material and per-volume configs
-        $config->apply_dynamic($object_config);
-        $config->apply_dynamic($volume->config);
-        
-        if ($volume->material_id ne '') {
-            my $material_config = $volume->material->config->clone;
-            $material_config->normalize;
-            $config->apply_dynamic($material_config);
-        }
-        
-        # find an existing print region with the same config
-        my $region_id;
-        foreach my $i (0..($self->region_count - 1)) {
-            my $region = $self->regions->[$i];
-            if ($config->equals($region->config)) {
-                $region_id = $i;
-                last;
-            }
-        }
-        
-        # if no region exists with the same config, create a new one
-        if (!defined $region_id) {
-            my $r = $self->add_region();
-            $r->config->apply($config);
-            $region_id = $self->region_count - 1;
-        }
-        
-        # assign volume to region
-        $o->add_region_volume($region_id, $volume_id);
-    }
-
-    # apply config to print object
-    $o->config->apply($self->default_object_config);
-    $o->config->apply_dynamic($object_config);
-}
-
-sub reload_object {
-    my ($self, $obj_idx) = @_;
-    
-    # TODO: this method should check whether the per-object config and per-material configs
-    # have changed in such a way that regions need to be rearranged or we can just apply
-    # the diff and invalidate something.  Same logic as apply_config()
-    # For now we just re-add all objects since we haven't implemented this incremental logic yet.
-    # This should also check whether object volumes (parts) have changed.
-    
-    my @models_objects = map $_->model_object, @{$self->objects};
-    $self->clear_objects;
-    $self->add_model_object($_) for @models_objects;
-}
-
-sub validate {
-    my $self = shift;
-    
-    if ($self->config->complete_objects) {
-        # check horizontal clearance
-        {
-            my @a = ();
-            foreach my $object (@{$self->objects}) {
-                # get convex hulls of all meshes assigned to this print object
-                my @mesh_convex_hulls = map $object->model_object->volumes->[$_]->mesh->convex_hull,
-                    map @$_,
-                    grep defined $_,
-                    @{$object->region_volumes};
-                
-                # make a single convex hull for all of them
-                my $convex_hull = convex_hull([ map @$_, @mesh_convex_hulls ]);
-                
-                # apply the same transformations we apply to the actual meshes when slicing them
-                $object->model_object->instances->[0]->transform_polygon($convex_hull);
-        
-                # align object to Z = 0 and apply XY shift
-                $convex_hull->translate(@{$object->_copies_shift});
-                
-                # grow convex hull with the clearance margin
-                ($convex_hull) = @{offset([$convex_hull], scale $self->config->extruder_clearance_radius / 2, 1, JT_ROUND, scale(0.1))};
-                
-                # now we need that no instance of $convex_hull does not intersect any of the previously checked object instances
-                for my $copy (@{$object->_shifted_copies}) {
-                    my $p = $convex_hull->clone;
-                    
-                    $p->translate(@$copy);
-                    if (@{ intersection(\@a, [$p]) }) {
-                        die "Some objects are too close; your extruder will collide with them.\n";
-                    }
-                    @a = @{union([@a, $p])};
-                }
-            }
-        }
-        
-        # check vertical clearance
-        {
-            my @object_height = ();
-            foreach my $object (@{$self->objects}) {
-                my $height = $object->size->z;
-                push @object_height, $height for @{$object->copies};
-            }
-            @object_height = sort { $a <=> $b } @object_height;
-            # ignore the tallest *copy* (this is why we repeat height for all of them):
-            # it will be printed as last one so its height doesn't matter
-            pop @object_height;
-            if (@object_height && max(@object_height) > scale $self->config->extruder_clearance_height) {
-                die "Some objects are too tall and cannot be printed without extruder collisions.\n";
-            }
-        }
-    }
-    
-    if ($self->config->spiral_vase) {
-        if ((map @{$_->copies}, @{$self->objects}) > 1) {
-            die "The Spiral Vase option can only be used when printing a single object.\n";
-        }
-        if (@{$self->regions} > 1) {
-            die "The Spiral Vase option can only be used when printing single material objects.\n";
-        }
-    }
-    
-    {
-        my $max_layer_height = max(
-            map { $_->config->layer_height, $_->config->get_value('first_layer_height') } @{$self->objects},
-        );
-        my $extruders = $self->extruders;
-        die "Layer height can't be greater than nozzle diameter\n"
-            if grep { $max_layer_height > $self->config->get_at('nozzle_diameter', $_) } @$extruders;
-    }
 }
 
 # this value is not supposed to be compared with $layer->id
@@ -600,7 +330,9 @@ sub make_skirt {
         if ($self->config->min_skirt_length > 0) {
             $extruded_length[$extruder_idx] ||= 0;
             if (!$extruders_e_per_mm[$extruder_idx]) {
-                my $extruder = Slic3r::Extruder->new($extruder_idx, $self->config);
+                my $config = Slic3r::Config::GCode->new;
+                $config->apply_print_config($self->config);
+                my $extruder = Slic3r::Extruder->new($extruder_idx, $config);
                 $extruders_e_per_mm[$extruder_idx] = $extruder->e_per_mm($mm3_per_mm);
             }
             $extruded_length[$extruder_idx] += unscale $loop->length * $extruders_e_per_mm[$extruder_idx];
@@ -772,16 +504,16 @@ sub write_gcode {
     my $gcodegen = Slic3r::GCode->new(
         placeholder_parser  => $self->placeholder_parser,
         layer_count         => $layer_count,
+        enable_cooling_markers => 1,
     );
-    $gcodegen->config->apply_print_config($self->config);
-    $gcodegen->set_extruders($self->extruders, $self->config);
+    $gcodegen->apply_print_config($self->config);
+    $gcodegen->set_extruders($self->extruders);
     
-    print $fh "G21 ; set units to millimeters\n" if $self->config->gcode_flavor ne 'makerware';
-    print $fh $gcodegen->set_fan(0, 1) if $self->config->cooling && $self->config->disable_fan_first_layers;
+    print $fh $gcodegen->writer->set_fan(0, 1) if $self->config->cooling && $self->config->disable_fan_first_layers;
     
     # set bed temperature
     if ((my $temp = $self->config->first_layer_bed_temperature) && $self->config->start_gcode !~ /M(?:190|140)/i) {
-        printf $fh $gcodegen->set_bed_temperature($temp, 1);
+        printf $fh $gcodegen->writer->set_bed_temperature($temp, 1);
     }
     
     # set extruder(s) temperature before and after start G-code
@@ -792,7 +524,7 @@ sub write_gcode {
         for my $t (@{$self->extruders}) {
             my $temp = $self->config->get_at('first_layer_temperature', $t);
             $temp += $self->config->standby_temperature_delta if $self->config->ooze_prevention;
-            printf $fh $gcodegen->set_temperature($temp, $wait, $t) if $temp > 0;
+            printf $fh $gcodegen->writer->set_temperature($temp, $wait, $t) if $temp > 0;
         }
     };
     $print_first_layer_temperature->(0);
@@ -800,15 +532,7 @@ sub write_gcode {
     $print_first_layer_temperature->(1);
     
     # set other general things
-    print  $fh "G90 ; use absolute coordinates\n" if $self->config->gcode_flavor ne 'makerware';
-    if ($self->config->gcode_flavor =~ /^(?:reprap|teacup)$/) {
-        printf $fh $gcodegen->reset_e;
-        if ($self->config->use_relative_e_distances) {
-            print $fh "M83 ; use relative distances for extrusion\n";
-        } else {
-            print $fh "M82 ; use absolute distances for extrusion\n";
-        }
-    }
+    print $fh $gcodegen->preamble;
     
     # initialize a motion planner for object-to-object travel moves
     if ($self->config->avoid_crossing_perimeters) {
@@ -828,7 +552,7 @@ sub write_gcode {
                 }
             }
         }
-        $gcodegen->external_mp(Slic3r::MotionPlanner->new(union_ex([ map @$_, @islands ])));
+        $gcodegen->init_external_mp(union_ex([ map @$_, @islands ]));
     }
     
     # calculate wiping points if needed
@@ -842,7 +566,11 @@ sub write_gcode {
                 $s->translate(map scale($_), @{$self->config->get_at('extruder_offset', $extruder_id)});
             }
             my $convex_hull = convex_hull([ map @$_, @skirts ]);
-            $gcodegen->standby_points([ map $_->clone, map @$_, map $_->subdivide(scale 10), @{offset([$convex_hull], scale 3)} ]);
+            
+            my $oozeprev = Slic3r::GCode::OozePrevention->new(
+                standby_points => [ map $_->clone, map @$_, map $_->subdivide(scale 10), @{offset([$convex_hull], scale 3)} ],
+            );
+            $gcodegen->ooze_prevention($oozeprev);
         }
     }
     
@@ -869,9 +597,13 @@ sub write_gcode {
                 # this happens before Z goes down to layer 0 again, so that 
                 # no collision happens hopefully.
                 if ($finished_objects > 0) {
-                    $gcodegen->set_shift(map unscale $copy->[$_], X,Y);
+                    $gcodegen->set_origin(Slic3r::Pointf->new(map unscale $copy->[$_], X,Y));
                     print $fh $gcodegen->retract;
-                    print $fh $gcodegen->G0($object->_copies_shift->negative, undef, 0, $gcodegen->config->travel_speed*60, 'move to origin position for next object');
+                    print $fh $gcodegen->travel_to(
+                        $object->_copies_shift->negative,
+                        undef,
+                        'move to origin position for next object',
+                    );
                 }
                 
                 my $buffer = Slic3r::GCode::CoolingBuffer->new(
@@ -885,9 +617,9 @@ sub write_gcode {
                     # another one, set first layer temperatures. this happens before the Z move
                     # is triggered, so machine has more time to reach such temperatures
                     if ($layer->id == 0 && $finished_objects > 0) {
-                        printf $fh $gcodegen->set_bed_temperature($self->config->first_layer_bed_temperature),
+                        printf $fh $gcodegen->writer->set_bed_temperature($self->config->first_layer_bed_temperature),
                             if $self->config->first_layer_bed_temperature;
-                        $print_first_layer_temperature->();
+                        $print_first_layer_temperature->(0);
                     }
                     print $fh $buffer->append(
                         $layer_gcode->process_layer($layer, [$copy]),
@@ -935,17 +667,16 @@ sub write_gcode {
     }
     
     # write end commands to file
-    print $fh $gcodegen->retract if $gcodegen->extruder;  # empty prints don't even set an extruder
-    print $fh $gcodegen->set_fan(0);
+    print $fh $gcodegen->retract;
+    print $fh $gcodegen->writer->set_fan(0);
     printf $fh "%s\n", $gcodegen->placeholder_parser->process($self->config->end_gcode);
+    print $fh $gcodegen->writer->update_progress($gcodegen->layer_count, $gcodegen->layer_count, 1);  # 100%
     
     $self->total_used_filament(0);
     $self->total_extruded_volume(0);
-    foreach my $extruder_id (@{$self->extruders}) {
-        my $extruder = $gcodegen->extruders->{$extruder_id};
-        # the final retraction doesn't really count as "used filament"
-        my $used_filament = $extruder->absolute_E + $extruder->retract_length;
-        my $extruded_volume = $extruder->extruded_volume($used_filament);
+    foreach my $extruder (@{$gcodegen->writer->extruders}) {
+        my $used_filament = $extruder->used_filament;
+        my $extruded_volume = $extruder->extruded_volume;
         
         printf $fh "; filament used = %.1fmm (%.1fcm3)\n",
             $used_filament, $extruded_volume/1000;

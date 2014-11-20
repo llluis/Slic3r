@@ -1,4 +1,4 @@
-use Test::More tests => 18;
+use Test::More tests => 20;
 use strict;
 use warnings;
 
@@ -102,10 +102,15 @@ use Slic3r::Test;
     $config->set('support_material_pattern', 'honeycomb');
     $config->set('support_material_extrusion_width', 0.6);
     $config->set('first_layer_extrusion_width', '100%');
+    $config->set('bridge_speed', 99);
+    $config->set('cooling', 0);                 # prevent speed alteration
+    $config->set('first_layer_speed', '100%');  # prevent speed alteration
+    $config->set('start_gcode', '');            # prevent any unexpected Z move
     my $print = Slic3r::Test::init_print('20mm_cube', config => $config);
     
-    my $layer_id = 0;
+    my $layer_id = -1;  # so that first Z move sets this to 0
     my @raft = my @first_object_layer = ();
+    my %first_object_layer_speeds = ();  # F => 1
     Slic3r::GCode::Reader->new->parse(Slic3r::Test::gcode($print), sub {
         my ($self, $cmd, $args, $info) = @_;
         
@@ -119,6 +124,7 @@ use Slic3r::Test;
                     push @raft, @path;
                 } else {
                     push @first_object_layer, @path;
+                    $first_object_layer_speeds{ $args->{F} // $self->F } = 1;
                 }
             }
         } elsif ($cmd eq 'G1' && $info->{dist_Z} > 0) {
@@ -128,6 +134,10 @@ use Slic3r::Test;
     
     ok !@{diff(\@first_object_layer, \@raft)},
         'first object layer is completely supported by raft';
+    is scalar(keys %first_object_layer_speeds), 1,
+        'only one speed used in first object layer';
+    ok +(keys %first_object_layer_speeds)[0] == $config->bridge_speed*60,
+        'bridge speed used in first object layer';
 }
 
 {

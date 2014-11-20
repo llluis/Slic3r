@@ -4,10 +4,12 @@
 #include <myinit.h>
 #include <set>
 #include <vector>
+#include <stdexcept>
 #include "Flow.hpp"
 #include "PrintConfig.hpp"
 #include "Point.hpp"
 #include "Layer.hpp"
+#include "Model.hpp"
 #include "PlaceholderParser.hpp"
 
 
@@ -24,6 +26,11 @@ enum PrintStep {
 enum PrintObjectStep {
     posSlice, posPerimeters, posPrepareInfill,
     posInfill, posSupportMaterial,
+};
+
+class PrintValidationException : public std::runtime_error {
+    public:
+    PrintValidationException(const std::string &error) : std::runtime_error(error) {};
 };
 
 template <class StepType>
@@ -70,7 +77,6 @@ class PrintObject
     public:
     // vector of (vectors of volume ids), indexed by region_id
     std::vector<std::vector<int> > region_volumes;
-    Points copies;      // Slic3r::Point objects in scaled G-code coordinates
     PrintObjectConfig config;
     t_layer_height_ranges layer_height_ranges;
     
@@ -95,7 +101,14 @@ class PrintObject
     
     Print* print();
     ModelObject* model_object();
-
+    
+    Points copies() const;
+    bool add_copy(const Pointf &point);
+    bool delete_last_copy();
+    bool delete_all_copies();
+    bool set_copies(const Points &points);
+    bool reload_model_instances();
+    
     // adds region_id, too, if necessary
     void add_region_volume(int region_id, int volume_id);
 
@@ -119,6 +132,7 @@ class PrintObject
     private:
     Print* _print;
     ModelObject* _model_object;
+    Points _copies;      // Slic3r::Point objects in scaled G-code coordinates
 
     // TODO: call model_object->get_bounding_box() instead of accepting
         // parameter
@@ -154,6 +168,7 @@ class Print
     PrintObject* add_object(ModelObject *model_object, const BoundingBoxf3 &modobj_bbox);
     PrintObject* set_new_object(size_t idx, ModelObject *model_object, const BoundingBoxf3 &modobj_bbox);
     void delete_object(size_t idx);
+    void reload_object(size_t idx);
 
     // methods for handling regions
     PrintRegion* get_region(size_t idx);
@@ -164,7 +179,10 @@ class Print
     bool invalidate_step(PrintStep step);
     bool invalidate_all_steps();
     
+    void add_model_object(ModelObject* model_object, int idx = -1);
+    bool apply_config(DynamicPrintConfig config);
     void init_extruders();
+    void validate() const;
     
     std::set<size_t> extruders() const;
     void _simplify_slices(double distance);
@@ -174,6 +192,7 @@ class Print
     private:
     void clear_regions();
     void delete_region(size_t idx);
+    PrintRegionConfig _region_config_from_model_volume(const ModelVolume &volume);
 };
 
 #define FOREACH_BASE(type, container, iterator) for (type::const_iterator iterator = (container).begin(); iterator != (container).end(); ++iterator)

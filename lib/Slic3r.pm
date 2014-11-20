@@ -7,7 +7,7 @@ use strict;
 use warnings;
 require v5.10;
 
-our $VERSION = "1.2.0";
+our $VERSION = VERSION();
 
 our $debug = 0;
 sub debugf {
@@ -38,10 +38,8 @@ use Moo 1.003001;
 use Slic3r::XS;   # import all symbols (constants etc.) before they get parsed
 use Slic3r::Config;
 use Slic3r::ExPolygon;
-use Slic3r::Extruder;
 use Slic3r::ExtrusionLoop;
 use Slic3r::ExtrusionPath;
-use Slic3r::ExtrusionPath::Collection;
 use Slic3r::Fill;
 use Slic3r::Flow;
 use Slic3r::Format::AMF;
@@ -52,6 +50,7 @@ use Slic3r::GCode::ArcFitting;
 use Slic3r::GCode::CoolingBuffer;
 use Slic3r::GCode::Layer;
 use Slic3r::GCode::MotionPlanner;
+use Slic3r::GCode::OozePrevention;
 use Slic3r::GCode::PlaceholderParser;
 use Slic3r::GCode::PressureManagement;
 use Slic3r::GCode::Reader;
@@ -60,7 +59,6 @@ use Slic3r::GCode::VibrationLimit;
 use Slic3r::Geometry qw(PI);
 use Slic3r::Geometry::Clipper;
 use Slic3r::Layer;
-use Slic3r::Layer::BridgeDetector;
 use Slic3r::Layer::Region;
 use Slic3r::Line;
 use Slic3r::Model;
@@ -164,8 +162,10 @@ sub thread_cleanup {
     
     # prevent destruction of shared objects
     no warnings 'redefine';
+    *Slic3r::BridgeDetector::DESTROY        = sub {};
     *Slic3r::Config::DESTROY                = sub {};
     *Slic3r::Config::Full::DESTROY          = sub {};
+    *Slic3r::Config::GCode::DESTROY         = sub {};
     *Slic3r::Config::Print::DESTROY         = sub {};
     *Slic3r::Config::PrintObject::DESTROY   = sub {};
     *Slic3r::Config::PrintRegion::DESTROY   = sub {};
@@ -177,6 +177,7 @@ sub thread_cleanup {
     *Slic3r::ExtrusionPath::Collection::DESTROY = sub {};
     *Slic3r::Flow::DESTROY                  = sub {};
     *Slic3r::GCode::PlaceholderParser::DESTROY = sub {};
+    *Slic3r::GCode::Writer::DESTROY         = sub {};
     *Slic3r::Geometry::BoundingBox::DESTROY = sub {};
     *Slic3r::Geometry::BoundingBoxf::DESTROY = sub {};
     *Slic3r::Geometry::BoundingBoxf3::DESTROY = sub {};

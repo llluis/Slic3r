@@ -52,13 +52,6 @@ PrintConfigDef::build_def() {
     Options["bridge_flow_ratio"].cli = "bridge-flow-ratio=f";
     Options["bridge_flow_ratio"].min = 0;
 
-    Options["perimeter_flow_ratio"].type = coFloat;
-    Options["perimeter_flow_ratio"].label = "Perimeter flow ratio";
-    Options["perimeter_flow_ratio"].category = "Advanced";
-    Options["perimeter_flow_ratio"].tooltip = "This factor affects the amount of plastic for perimeters.";
-    Options["perimeter_flow_ratio"].cli = "perimeter-flow-ratio=f";
-    Options["perimeter_flow_ratio"].min = 0;
-
     Options["bridge_speed"].type = coFloat;
     Options["bridge_speed"].label = "Bridges";
     Options["bridge_speed"].category = "Speed";
@@ -332,11 +325,6 @@ PrintConfigDef::build_def() {
     Options["first_layer_temperature"].cli = "first-layer-temperature=i@";
     Options["first_layer_temperature"].min = 0;
     Options["first_layer_temperature"].max = 400;
-
-    Options["g0"].type = coBool;
-    Options["g0"].label = "Use G0 for travel moves";
-    Options["g0"].tooltip = "Only enable this if your firmware supports G0 properly (thus decouples all axes using their maximum speeds instead of synchronizing them). Travel moves and retractions will be combined in single commands, speeding them print up.";
-    Options["g0"].cli = "g0!";
 
     Options["gap_fill_speed"].type = coFloat;
     Options["gap_fill_speed"].label = "Gap fill";
@@ -982,6 +970,7 @@ t_optiondef_map PrintConfigDef::def = PrintConfigDef::build_def();
 REGISTER_CLASS(DynamicPrintConfig, "Config");
 REGISTER_CLASS(PrintObjectConfig, "Config::PrintObject");
 REGISTER_CLASS(PrintRegionConfig, "Config::PrintRegion");
+REGISTER_CLASS(GCodeConfig, "Config::GCode");
 REGISTER_CLASS(PrintConfig, "Config::Print");
 REGISTER_CLASS(FullPrintConfig, "Config::Full");
 #endif

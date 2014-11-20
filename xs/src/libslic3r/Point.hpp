@@ -12,11 +12,13 @@ class Line;
 class MultiPoint;
 class Point;
 class Pointf;
+class Pointf3;
 typedef Point Vector;
 typedef std::vector<Point> Points;
 typedef std::vector<Point*> PointPtrs;
 typedef std::vector<const Point*> PointConstPtrs;
 typedef std::vector<Pointf> Pointfs;
+typedef std::vector<Pointf3> Pointf3s;
 
 class Point
 {
@@ -27,10 +29,14 @@ class Point
     Point(int _x, int _y): x(_x), y(_y) {};
     Point(long long _x, long long _y): x(_x), y(_y) {};  // for Clipper
     Point(double x, double y);
+    static Point new_scale(coordf_t x, coordf_t y) {
+        return Point(scale_(x), scale_(y));
+    };
     bool operator==(const Point& rhs) const;
     std::string wkt() const;
     void scale(double factor);
     void translate(double x, double y);
+    void translate(const Point &vector);
     void rotate(double angle, const Point &center);
     bool coincides_with(const Point &point) const;
     bool coincides_with_epsilon(const Point &point) const;
@@ -75,7 +81,7 @@ class Pointf
     
     #ifdef SLIC3RXS
     bool from_SV(SV* point_sv);
-    void from_SV_check(SV* point_sv);
+    bool from_SV_check(SV* point_sv);
     SV* to_SV_pureperl() const;
     #endif
 };

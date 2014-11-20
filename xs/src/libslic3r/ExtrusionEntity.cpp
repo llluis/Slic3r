@@ -36,7 +36,7 @@ ExtrusionPath::intersect_expolygons(const ExPolygonCollection &collection, Extru
 {
     // perform clipping
     Polylines clipped;
-    intersection<Polylines,Polylines>(this->polyline, collection, clipped);
+    intersection<Polylines,Polylines>(this->polyline, collection, &clipped);
     return this->_inflate_collection(clipped, retval);
 }
 
@@ -45,7 +45,7 @@ ExtrusionPath::subtract_expolygons(const ExPolygonCollection &collection, Extrus
 {
     // perform clipping
     Polylines clipped;
-    diff<Polylines,Polylines>(this->polyline, collection, clipped);
+    diff<Polylines,Polylines>(this->polyline, collection, &clipped);
     return this->_inflate_collection(clipped, retval);
 }
 
@@ -123,7 +123,11 @@ ExtrusionPath::gcode(Extruder* extruder, double e, double F,
         const double line_length = line_it->length() * SCALING_FACTOR;
 
         // calculate extrusion length for this line
-        double E = (e == 0) ? 0 : extruder->extrude(e * line_length);
+        double E = 0;
+        if (e > 0) {
+            extruder->extrude(e * line_length);
+            E = extruder->E;
+        }
 
         // compose G-code line
 
@@ -220,7 +224,7 @@ ExtrusionLoop::length() const
     return len;
 }
 
-void
+bool
 ExtrusionLoop::split_at_vertex(const Point &point)
 {
     for (ExtrusionPaths::iterator path = this->paths.begin(); path != this->paths.end(); ++path) {
@@ -257,10 +261,10 @@ ExtrusionLoop::split_at_vertex(const Point &point)
                 // we can now override the old path list with the new one and stop looping
                 this->paths = new_paths;
             }
-            return;
+            return true;
         }
     }
-    CONFESS("Point not found");
+    return false;
 }
 
 void

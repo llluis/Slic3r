@@ -18,10 +18,17 @@ MotionPlanner::~MotionPlanner()
         delete *graph;
 }
 
+size_t
+MotionPlanner::islands_count() const
+{
+    return this->islands.size();
+}
+
 void
 MotionPlanner::initialize()
 {
     if (this->initialized) return;
+    if (this->islands.empty()) return;  // prevent initialization of empty BoundingBox
     
     ExPolygons expp;
     for (ExPolygons::const_iterator island = this->islands.begin(); island != this->islands.end(); ++island) {
@@ -34,7 +41,7 @@ MotionPlanner::initialize()
     Polygons outer_holes;
     for (ExPolygons::const_iterator island = this->islands.begin(); island != this->islands.end(); ++island) {
         this->inner.push_back(ExPolygonCollection());
-        offset_ex(*island, this->inner.back(), -MP_INNER_MARGIN);
+        offset(*island, &this->inner.back().expolygons, -MP_INNER_MARGIN);
         
         outer_holes.push_back(island->contour);
     }
@@ -42,7 +49,7 @@ MotionPlanner::initialize()
     // grow island contours in order to prepare holes of the outer environment
     // This is actually wrong because it might merge contours that are close,
     // thus confusing the island check in shortest_path() below
-    //offset(outer_holes, outer_holes, +MP_OUTER_MARGIN);
+    //offset(outer_holes, &outer_holes, +MP_OUTER_MARGIN);
     
     // generate outer contour as bounding box of everything
     Points points;
@@ -52,12 +59,12 @@ MotionPlanner::initialize()
     
     // grow outer contour
     Polygons contour;
-    offset(bb.polygon(), contour, +MP_OUTER_MARGIN);
+    offset(bb.polygon(), &contour, +MP_OUTER_MARGIN);
     assert(contour.size() == 1);
     
     // make expolygon for outer environment
     ExPolygons outer;
-    diff(contour, outer_holes, outer);
+    diff(contour, outer_holes, &outer);
     assert(outer.size() == 1);
     this->outer = outer.front();
     
@@ -69,6 +76,12 @@ void
 MotionPlanner::shortest_path(const Point &from, const Point &to, Polyline* polyline)
 {
     if (!this->initialized) this->initialize();
+    
+    if (this->islands.empty()) {
+        polyline->points.push_back(from);
+        polyline->points.push_back(to);
+        return;
+    }
     
     // Are both points in the same island?
     int island_idx = -1;

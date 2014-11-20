@@ -178,10 +178,20 @@ use overload
     '@{}' => sub { $_[0]->arrayref },
     'fallback' => 1;
 
+sub new {
+    my ($class, @surfaces) = @_;
+    
+    my $self = $class->_new;
+    $self->append($_) for @surfaces;
+    return $self;
+}
+
 package main;
 for my $class (qw(
+        Slic3r::BridgeDetector
         Slic3r::Config
         Slic3r::Config::Full
+        Slic3r::Config::GCode
         Slic3r::Config::Print
         Slic3r::Config::PrintObject
         Slic3r::Config::PrintRegion

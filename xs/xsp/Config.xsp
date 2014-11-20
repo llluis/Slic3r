@@ -14,18 +14,43 @@
     SV* get_at(t_config_option_key opt_key, int i);
     bool set(t_config_option_key opt_key, SV* value);
     bool set_deserialize(t_config_option_key opt_key, SV* str);
+    void set_ifndef(t_config_option_key opt_key, SV* value, bool deserialize = false);
     std::string serialize(t_config_option_key opt_key);
     double get_abs_value(t_config_option_key opt_key);
     %name{get_abs_value_over}
         double get_abs_value(t_config_option_key opt_key, double ratio_over);
     void apply(DynamicPrintConfig* other)
         %code{% THIS->apply(*other, true); %};
+    std::vector<std::string> diff(DynamicPrintConfig* other)
+        %code{% RETVAL = THIS->diff(*other); %};
     void apply_static(FullPrintConfig* other)
         %code{% THIS->apply(*other, true); %};
     std::vector<std::string> get_keys()
         %code{% THIS->keys(&RETVAL); %};
     void erase(t_config_option_key opt_key);
     void normalize();
+};
+
+%name{Slic3r::Config::GCode} class GCodeConfig {
+    GCodeConfig();
+    ~GCodeConfig();
+    bool has(t_config_option_key opt_key);
+    SV* as_hash();
+    SV* get(t_config_option_key opt_key);
+    SV* get_at(t_config_option_key opt_key, int i);
+    bool set(t_config_option_key opt_key, SV* value);
+    bool set_deserialize(t_config_option_key opt_key, SV* str);
+    void set_ifndef(t_config_option_key opt_key, SV* value, bool deserialize = false);
+    std::string serialize(t_config_option_key opt_key);
+    double get_abs_value(t_config_option_key opt_key);
+    %name{get_abs_value_over}
+        double get_abs_value(t_config_option_key opt_key, double ratio_over);
+    void apply_print_config(PrintConfig* other)
+        %code{% THIS->apply(*other, true); %};
+    void apply_dynamic(DynamicPrintConfig* other)
+        %code{% THIS->apply(*other, true); %};
+    std::vector<std::string> get_keys()
+        %code{% THIS->keys(&RETVAL); %};
 };
 
 %name{Slic3r::Config::Print} class PrintConfig {
@@ -37,6 +62,7 @@
     SV* get_at(t_config_option_key opt_key, int i);
     bool set(t_config_option_key opt_key, SV* value);
     bool set_deserialize(t_config_option_key opt_key, SV* str);
+    void set_ifndef(t_config_option_key opt_key, SV* value, bool deserialize = false);
     std::string serialize(t_config_option_key opt_key);
     double get_abs_value(t_config_option_key opt_key);
     %name{get_abs_value_over}
@@ -56,6 +82,7 @@
     SV* get_at(t_config_option_key opt_key, int i);
     bool set(t_config_option_key opt_key, SV* value);
     bool set_deserialize(t_config_option_key opt_key, SV* str);
+    void set_ifndef(t_config_option_key opt_key, SV* value, bool deserialize = false);
     std::string serialize(t_config_option_key opt_key);
     double get_abs_value(t_config_option_key opt_key);
     %name{get_abs_value_over}
@@ -77,6 +104,7 @@
     SV* get_at(t_config_option_key opt_key, int i);
     bool set(t_config_option_key opt_key, SV* value);
     bool set_deserialize(t_config_option_key opt_key, SV* str);
+    void set_ifndef(t_config_option_key opt_key, SV* value, bool deserialize = false);
     std::string serialize(t_config_option_key opt_key);
     double get_abs_value(t_config_option_key opt_key);
     %name{get_abs_value_over}
@@ -98,6 +126,7 @@
     SV* get_at(t_config_option_key opt_key, int i);
     bool set(t_config_option_key opt_key, SV* value);
     bool set_deserialize(t_config_option_key opt_key, SV* str);
+    void set_ifndef(t_config_option_key opt_key, SV* value, bool deserialize = false);
     std::string serialize(t_config_option_key opt_key);
     double get_abs_value(t_config_option_key opt_key);
     %name{get_abs_value_over}
@@ -112,7 +141,6 @@
         %code{% THIS->apply(*other, true); %};
     std::vector<std::string> get_keys()
         %code{% THIS->keys(&RETVAL); %};
-    std::string get_extrusion_axis();
 };
 
 %package{Slic3r::Config};

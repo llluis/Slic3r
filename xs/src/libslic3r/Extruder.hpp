@@ -10,37 +10,37 @@ namespace Slic3r {
 class Extruder
 {
     public:
-    Extruder(int id, PrintConfig *config);
+    int id;
+    double E;
+    double absolute_E;
+    double retracted;
+    double restart_extra;
+    double e_per_mm3;
+    double retract_speed_mm_min;
+    
+    Extruder(int id, GCodeConfig *config);
     virtual ~Extruder() {}
     void reset();
     double extrude(double dE);
+    double retract(double length, double restart_extra);
+    double unretract();
+    double e_per_mm(double mm3_per_mm) const;
+    double extruded_volume() const;
+    double used_filament() const;
     
-    
-    Pointf extruder_offset() const;
-    double nozzle_diameter() const;
     double filament_diameter() const;
     double extrusion_multiplier() const;
-    int temperature() const;
-    int first_layer_temperature() const;
     double retract_length() const;
     double retract_lift() const;
     int retract_speed() const;
     int unretract_speed() const;
     double pressure_multiplier() const;
     double retract_restart_extra() const;
-    double retract_before_travel() const;
-    bool retract_layer_change() const;
     double retract_length_toolchange() const;
     double retract_restart_extra_toolchange() const;
-    bool wipe() const;
     
-    int id;
-    double E;
-    double absolute_E;
-    double retracted;
-    double restart_extra;
-    
-    PrintConfig *config;
+    private:
+    GCodeConfig *config;
 };
 
 }

@@ -13,7 +13,7 @@ our @EXPORT_OK = qw(
     point_along_segment polygon_segment_having_point polygon_has_subsegment
     deg2rad rad2deg
     rotate_points move_points
-    dot perp polygon_points_visibility
+    dot perp
     line_intersection bounding_box bounding_box_intersect
     angle3points
     chained_path chained_path_from collinear scale unscale
@@ -207,23 +207,6 @@ sub polygon_is_convex {
     return 1;
 }
 
-sub deg2rad {
-    my ($degrees) = @_;
-    return PI() * $degrees / 180;
-}
-
-sub rad2deg {
-    my ($rad) = @_;
-    return $rad / PI() * 180;
-}
-
-sub rad2deg_dir {
-    my ($rad) = @_;
-    $rad = ($rad < PI) ? (-$rad + PI/2) : ($rad + PI/2);
-    $rad += PI if $rad < 0;
-    return rad2deg($rad);
-}
-
 sub rotate_points {
     my ($radians, $center, @points) = @_;
     $center //= [0,0];
@@ -289,19 +272,6 @@ sub dot {
 sub perp {
     my ($u, $v) = @_;
     return $u->[X] * $v->[Y] - $u->[Y] * $v->[X];
-}
-
-sub polygon_points_visibility {
-    my ($polygon, $p1, $p2) = @_;
-    
-    my $our_line = [ $p1, $p2 ];
-    foreach my $line (polygon_lines($polygon)) {
-        my $intersection = line_intersection($our_line, $line, 1) // next;
-        next if grep points_coincide($intersection, $_), $p1, $p2;
-        return 0;
-    }
-    
-    return 1;
 }
 
 sub line_intersects_any {
