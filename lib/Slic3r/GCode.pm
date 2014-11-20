@@ -286,6 +286,8 @@ sub _extrude_path {
     # calculate extrusion length per distance unit
     my $e_per_mm = $self->writer->extruder->e_per_mm3 * $path->mm3_per_mm;
     $e_per_mm = 0 if !$self->writer->extrusion_axis;
+
+    $e_per_mm *= $self->config->get_abs_value('perimeter_flow_ratio') if $path->is_perimeter;
     
     # set speed
     my $F;

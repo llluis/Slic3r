@@ -52,6 +52,13 @@ PrintConfigDef::build_def() {
     Options["bridge_flow_ratio"].cli = "bridge-flow-ratio=f";
     Options["bridge_flow_ratio"].min = 0;
 
+    Options["perimeter_flow_ratio"].type = coFloat;
+    Options["perimeter_flow_ratio"].label = "Perimeter flow ratio";
+    Options["perimeter_flow_ratio"].category = "Advanced";
+    Options["perimeter_flow_ratio"].tooltip = "This factor affects the amount of plastic for perimeters.";
+    Options["perimeter_flow_ratio"].cli = "perimeter-flow-ratio=f";
+    Options["perimeter_flow_ratio"].min = 0;
+
     Options["bridge_speed"].type = coFloat;
     Options["bridge_speed"].label = "Bridges";
     Options["bridge_speed"].category = "Speed";
